@@ -60,6 +60,11 @@ Auto-fill job applications on Workday, Greenhouse, Lever, and more. Stop filling
 - Example: "Why do you want to work here?" → your pre-written answer
 - Matches by question keyword automatically
 
+### Backup / Restore
+- Export all stored extension data to JSON
+- Import saved backups into `chrome.storage.local` and `chrome.storage.sync`
+- Restore profiles, settings, credentials, and history from backup files
+
 ### History Tab
 - Log of every page where you triggered auto-fill
 - Shows site name, time, and number of fields filled

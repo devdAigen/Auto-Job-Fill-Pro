@@ -76,6 +76,15 @@ function setApiKeyStatus(msg, type) {
   if (type !== "loading") setTimeout(() => { el.style.display = "none"; }, 4000);
 }
 
+function setBackupStatus(msg, type = "success") {
+  const el = document.getElementById("backupStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = type === "error" ? "var(--red)" : "var(--green)";
+  el.style.display = "block";
+  setTimeout(() => { el.style.display = "none"; }, 4000);
+}
+
 chrome.storage.local.get(["anthropicApiKey"], r => {
   if (r.anthropicApiKey) { cachedApiKey = r.anthropicApiKey; document.getElementById("apiKeyInput").value = r.anthropicApiKey; }
 });
@@ -136,6 +145,15 @@ document.getElementById("dismissBannerBtn")?.addEventListener("click", () => {
   document.getElementById("apiKeyBanner").style.display = "none";
 });
 
+document.getElementById("exportBackupBtn")?.addEventListener("click", exportBackup);
+document.getElementById("importBackupBtn")?.addEventListener("click", () => document.getElementById("importBackupFile")?.click());
+document.getElementById("importBackupFile")?.addEventListener("change", event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  importBackupFile(file);
+  event.target.value = "";
+});
+
 // ─── Diversity Collapsible ─────────────────────────────────────────────────────
 document.getElementById("diversityToggle").addEventListener("click", () => {
   const s = document.getElementById("diversitySection");
@@ -158,6 +176,82 @@ function saveSettingsNow() {
 document.getElementById("autoFillToggle").addEventListener("change", saveSettingsNow);
 document.getElementById("skipFilledToggle").addEventListener("change", saveSettingsNow);
 document.getElementById("autoAcceptTermsToggle").addEventListener("change", saveSettingsNow);
+
+function exportBackup() {
+  chrome.storage.local.get(null, localData => {
+    chrome.storage.sync.get(null, syncData => {
+      const backup = {
+        metadata: { exportedAt: new Date().toISOString(), source: "JobFill Pro" },
+        local: localData,
+        sync: syncData
+      };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `jobfill-pro-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showResult("Backup exported successfully");
+      setBackupStatus("Backup downloaded to your device.");
+    });
+  });
+}
+
+function importBackupFile(file) {
+  if (!file.name.toLowerCase().endsWith(".json")) {
+    showResult("Please select a JSON backup file", "error");
+    setBackupStatus("Invalid file type", "error");
+    return;
+  }
+
+  if (!confirm("Importing a backup will overwrite your current stored data. Continue?")) return;
+
+  const reader = new FileReader();
+  reader.onload = event => {
+    try {
+      const raw = event.target.result;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") throw new Error("Invalid backup format");
+      const localData = parsed.local || {};
+      const syncData = parsed.sync || {};
+      chrome.storage.local.set(localData, () => {
+        chrome.storage.sync.set(syncData, () => {
+          showResult("Backup imported successfully");
+          setBackupStatus("Backup imported. Reloading popup state...");
+          applyImportedBackup(localData);
+        });
+      });
+    } catch (err) {
+      showResult("Failed to import backup", "error");
+      setBackupStatus(err.message || "Invalid backup file", "error");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function applyImportedBackup(localData) {
+  if (localData.profile) {
+    currentProfile = localData.profile;
+    loadProfileToForm(currentProfile);
+  }
+  if (localData.settings) {
+    document.getElementById("autoFillToggle").checked = !!localData.settings.autoFillOnLoad;
+    document.getElementById("skipFilledToggle").checked = localData.settings.skipFilled !== false;
+    document.getElementById("autoAcceptTermsToggle").checked = localData.settings.autoAcceptTerms !== false;
+  }
+  if (localData.credentials) {
+    credsData = localData.credentials;
+    renderCredList(credsData);
+  }
+  if (localData.anthropicApiKey) {
+    cachedApiKey = localData.anthropicApiKey;
+    document.getElementById("apiKeyInput").value = cachedApiKey;
+  }
+  refreshStatus();
+}
 
 // ─── Default Profile ───────────────────────────────────────────────────────────
 function getDefaultProfile() {

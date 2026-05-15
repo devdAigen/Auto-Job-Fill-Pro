@@ -177,6 +177,26 @@
       labels: ["university", "school", "college", "institution"],
       workdayIds: []
     },
+    field: {
+      keys: ["fieldofstudy", "field_of_study", "major", "specialization", "course", "study"],
+      labels: ["field of study", "major", "specialization", "course", "study"],
+      workdayIds: []
+    },
+    graduationYear: {
+      keys: ["graduationyear", "graduation_year", "gradyear", "yearofgraduation", "graduated"],
+      labels: ["graduation year", "year of graduation", "graduated"],
+      workdayIds: []
+    },
+    secondarySchool: {
+      keys: ["secondaryschool", "secondary_school", "highschool", "high_school", "schoolname"],
+      labels: ["secondary school", "high school", "school"],
+      workdayIds: []
+    },
+    secondaryYear: {
+      keys: ["secondaryyear", "secondary_year", "highschoolgraduationyear", "high_school_graduation_year"],
+      labels: ["secondary graduation year", "high school graduation year", "graduation year"],
+      workdayIds: []
+    },
     gpa: {
       keys: ["gpa", "grade", "cgpa", "percentage", "marks"],
       labels: ["gpa", "cgpa", "grade", "percentage", "marks"],
@@ -227,25 +247,70 @@
 
   // ─── Label Finder ─────────────────────────────────────────────────────────
   function getLabelText(el) {
+    if (!el) return "";
+
     if (el.id) {
       try {
         const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
         if (label) return label.textContent.trim().toLowerCase();
       } catch {}
     }
-    const parent = el.closest("label");
-    if (parent) return parent.textContent.trim().toLowerCase();
+
+    const parentLabel = el.closest("label");
+    if (parentLabel) return parentLabel.textContent.trim().toLowerCase();
+
+    if (currentPlatform.id === "workday") {
+      const fieldset = el.closest("fieldset");
+      if (fieldset) {
+        const legend = fieldset.querySelector("legend");
+        if (legend) {
+          const legendText = legend.textContent.trim();
+          if (legendText) return legendText.toLowerCase();
+        }
+      }
+
+      let ancestor = el.parentElement;
+      while (ancestor) {
+        if (ancestor.matches("label, legend")) return ancestor.textContent.trim().toLowerCase();
+        let nearLabel = ancestor.querySelector("label, legend, .label, [class*='label'], [data-automation-id*='Label']");
+        if (!nearLabel) {
+          nearLabel = ancestor.querySelector("[data-automation-id*='richText']");
+        }
+        if (nearLabel && !nearLabel.contains(el)) {
+          const text = nearLabel.textContent.trim();
+          if (text) return text.toLowerCase();
+        }
+        ancestor = ancestor.parentElement;
+      }
+    }
+
     if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").toLowerCase();
     const labelledBy = el.getAttribute("aria-labelledby");
     if (labelledBy) {
       const parts = labelledBy.split(/\s+/).map(id => document.getElementById(id)?.textContent || "");
       if (parts.some(p => p)) return parts.join(" ").trim().toLowerCase();
     }
-    const container = el.closest("div, fieldset, section, li, td, [class*='field'], [class*='Field']");
+
+    const container = el.closest(".form-group, .form-field, .control-group, .question, .form-row, .field-group, .input-group, fieldset");
     if (container) {
-      const nearLabel = container.querySelector("label, .label, [class*='label'], legend, [data-automation-id*='Label']");
-      if (nearLabel && !nearLabel.contains(el)) return nearLabel.textContent.trim().toLowerCase();
+      const groupLabel = container.querySelector("label, legend, .control-label, .field-label, .question-label, [class*='label'], [data-automation-id*='Label'], [data-automation-id*='richText']");
+      if (groupLabel && !groupLabel.contains(el)) {
+        const text = groupLabel.textContent.trim();
+        if (text) return text.toLowerCase();
+      }
     }
+
+    let ancestor = el.parentElement;
+    while (ancestor) {
+      if (ancestor.matches("label, legend")) return ancestor.textContent.trim().toLowerCase();
+      const nearLabel = ancestor.querySelector("label, legend, .label, [class*='label'], [data-automation-id*='Label']");
+      if (nearLabel && !nearLabel.contains(el)) {
+        const text = nearLabel.textContent.trim();
+        if (text) return text.toLowerCase();
+      }
+      ancestor = ancestor.parentElement;
+    }
+
     return "";
   }
 
@@ -307,7 +372,11 @@
       countryCode: profile.professional?.countryCode,
       degree: profile.education?.degree,
       university: profile.education?.university,
+      field: profile.education?.field,
+      graduationYear: profile.education?.graduationYear,
       gpa: profile.education?.gpa,
+      secondarySchool: profile.education?.secondarySchool,
+      secondaryYear: profile.education?.secondaryYear,
       workAuthorized: profile.work?.authorized ? "Yes" : "No",
       sponsorship: profile.work?.sponsorship ? "Yes" : "No",
       veteranStatus: profile.diversity?.veteranStatus,
@@ -500,18 +569,19 @@
       const combined = (label + " " + ph).trim();
       if (!combined) return;
 
-      let bestMatch = null, bestScore = 0;
-      for (const qa of customAnswers) {
-        if (!qa.question || !qa.answer) continue;
+      let bestMatch = null, bestScore = 0, bestIndex = -1;
+      customAnswers.forEach((qa, idx) => {
+        if (!qa.question || !qa.answer) return;
         const score = fuzzyMatchScore(combined, qa.question);
-        if (score > bestScore && score >= 0.35) { bestScore = score; bestMatch = qa; }
-      }
+        if (score > bestScore && score >= 0.35) { bestScore = score; bestMatch = qa; bestIndex = idx; }
+      });
       if (bestMatch) {
         console.log("[JobFill] Matched custom answer:", bestMatch.question, "score:", bestScore, "field:", combined);
         el.tagName.toLowerCase() === "textarea"
           ? setReactTextareaValue(el, bestMatch.answer)
           : setReactInputValue(el, bestMatch.answer);
         count++;
+        customAnswers.splice(bestIndex, 1); // Remove used answer
       }
     });
     return count;
@@ -534,25 +604,51 @@
       const id = (el.id || "").toLowerCase();
       const combined = (label + " " + ph + " " + name + " " + id).trim();
 
-      let bestMatch = null, bestScore = 0;
-      for (const cf of customFields) {
-        if (!cf.label || !cf.value) continue;
+      let bestMatch = null, bestScore = 0, bestIndex = -1;
+      customFields.forEach((cf, idx) => {
+        if (!cf.label || !cf.value) return;
         const score = fuzzyMatchScore(combined, cf.label);
-        if (score > bestScore && score >= 0.4) { bestScore = score; bestMatch = cf; }
-      }
+        if (score > bestScore && score >= 0.4) { bestScore = score; bestMatch = cf; bestIndex = idx; }
+      });
       if (bestMatch) {
         console.log("[JobFill] Matched custom field:", bestMatch.label, "score:", bestScore);
         el.tagName.toLowerCase() === "textarea"
           ? setReactTextareaValue(el, bestMatch.value)
           : setReactInputValue(el, bestMatch.value);
         count++;
+        customFields.splice(bestIndex, 1); // Remove used field
       }
     });
     return count;
   }
 
+  async function fillButtonDropdown(buttonEl, desiredAnswer) {
+    if (!buttonEl || !desiredAnswer) return false;
+    try {
+      buttonEl.focus();
+      buttonEl.click();
+      await new Promise(r => setTimeout(r, 300));
+
+      const options = Array.from(document.querySelectorAll('[role="option"], [data-automation-id*="option"], [data-automation-id*="Option"], li[role="option"], div[role="option"], button[role="option"]'));
+      const desired = desiredAnswer.toLowerCase().trim();
+      const normalizedDesired = normalizeYesNo(desired);
+
+      let match = options.find(o => normalizeYesNo(o.textContent) === normalizedDesired);
+      if (!match) match = options.find(o => o.textContent.toLowerCase().trim() === desired);
+      if (!match) match = options.find(o => o.textContent.toLowerCase().includes(desired));
+      if (!match) match = options.find(o => desired.includes(o.textContent.toLowerCase().trim()) && o.textContent.trim().length > 2);
+
+      if (match) {
+        match.click();
+        await new Promise(r => setTimeout(r, 200));
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   // ─── Yes/No Answers (Context-Aware) ───────────────────────────────────────
-  function fillYesNoAnswers(yesNoAnswers) {
+  async function fillYesNoAnswers(yesNoAnswers) {
     if (!yesNoAnswers?.length) return 0;
     console.log("[JobFill] fillYesNoAnswers called with", yesNoAnswers.length, "items");
     let count = 0;
@@ -564,17 +660,46 @@
       const combined = (label + " " + ph).trim();
       if (!combined) return;
 
-      let bestMatch = null, bestScore = 0;
-      for (const yn of yesNoAnswers) {
-        if (!yn.question || yn.answer === "Skip") continue;
+      let bestMatch = null, bestScore = 0, bestIndex = -1;
+      yesNoAnswers.forEach((yn, idx) => {
+        if (!yn.question || yn.answer === "Skip") return;
         const score = fuzzyMatchScore(combined, yn.question);
-        if (score > bestScore && score >= 0.3) { bestScore = score; bestMatch = yn; }
-      }
+        if (score > bestScore && score >= 0.3) { bestMatch = yn; bestScore = score; bestIndex = idx; }
+      });
       if (bestMatch) {
         console.log("[JobFill] Yes/No select match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
-        if (fillSelectBestMatch(sel, bestMatch.answer)) count++;
+        if (fillSelectBestMatch(sel, bestMatch.answer)) {
+          count++;
+          yesNoAnswers.splice(bestIndex, 1); // Remove used answer
+        }
       }
     });
+
+    // Handle button dropdowns (Workday-style custom listboxes)
+    if (currentPlatform.id === "workday") {
+      const buttonCandidates = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"], button[role="combobox"], [role="combobox"]'));
+      for (const btn of buttonCandidates) {
+        const label = getLabelText(btn);
+        const ph = (btn.getAttribute("aria-label") || "").toLowerCase();
+        const combined = (label + " " + ph).trim();
+        if (!combined) continue;
+
+        let bestMatch = null, bestScore = 0, bestIndex = -1;
+        yesNoAnswers.forEach((yn, idx) => {
+          if (!yn.question || yn.answer === "Skip") return;
+          const score = fuzzyMatchScore(combined, yn.question);
+          if (score > bestScore && score >= 0.3) { bestMatch = yn; bestScore = score; bestIndex = idx; }
+        });
+        if (bestMatch) {
+          console.log("[JobFill] Yes/No dropdown match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
+          const filled = await fillButtonDropdown(btn, bestMatch.answer);
+          if (filled) {
+            count++;
+            yesNoAnswers.splice(bestIndex, 1); // Remove used answer
+          }
+        }
+      }
+    }
 
     // Handle radio groups
     const groups = {};
@@ -589,12 +714,12 @@
       const label = getLabelText(group[0]);
       if (!label) continue;
 
-      let bestMatch = null, bestScore = 0;
-      for (const yn of yesNoAnswers) {
-        if (!yn.question || yn.answer === "Skip") continue;
+      let bestMatch = null, bestScore = 0, bestIndex = -1;
+      yesNoAnswers.forEach((yn, idx) => {
+        if (!yn.question || yn.answer === "Skip") return;
         const score = fuzzyMatchScore(label, yn.question);
-        if (score > bestScore && score >= 0.3) { bestScore = score; bestMatch = yn; }
-      }
+        if (score > bestScore && score >= 0.3) { bestScore = score; bestMatch = yn; bestIndex = idx; }
+      });
       if (bestMatch) {
         console.log("[JobFill] Yes/No radio match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
         const desired = normalizeYesNo(bestMatch.answer);
@@ -602,6 +727,7 @@
           const rv = normalizeYesNo(r.value || getLabelText(r));
           if (rv === desired) { r.click(); count++; }
         });
+        yesNoAnswers.splice(bestIndex, 1); // Remove used answer
       }
     }
     return count;
@@ -661,6 +787,8 @@
 
   // ─── Main Auto-Fill ───────────────────────────────────────────────────────
   async function autoFill(profile, skipFilled = true, acceptTerms = true) {
+    if (isFilling) return { filled: 0, skipped: 0, errors: [], fields: [] }; // Prevent concurrent fills
+    isFilling = true;
     console.log("[JobFill] autoFill start — customAnswers:", profile.customAnswers?.length, "customFields:", profile.customFields?.length, "yesNoAnswers:", profile.yesNoAnswers?.length);
     const results = { filled: 0, skipped: 0, errors: [], fields: [] };
 
@@ -682,13 +810,13 @@
 
     fillYesNoRadios(profile);
 
-    const ynCount = fillYesNoAnswers(profile.yesNoAnswers || []);
+    const ynCount = await fillYesNoAnswers([...profile.yesNoAnswers || []]);
     results.filled += ynCount;
 
-    const customCount = fillCustomAnswers(profile.customAnswers || []);
+    const customCount = fillCustomAnswers([...profile.customAnswers || []]);
     results.filled += customCount;
 
-    const cfCount = fillCustomFields(profile.customFields || []);
+    const cfCount = fillCustomFields([...profile.customFields || []]);
     results.filled += cfCount;
 
     await fillAllWorkdayComboboxes(profile);
@@ -696,6 +824,7 @@
     if (acceptTerms) autoAcceptTerms();
 
     console.log("[JobFill] autoFill done — filled:", results.filled, "skipped:", results.skipped);
+    isFilling = false;
     return results;
   }
 
@@ -712,9 +841,10 @@
   let autoFillEnabled = false;
   let storedProfile = null;
   let acceptTermsEnabled = true;
+  let isFilling = false;
 
   const observer = new MutationObserver(() => {
-    if (!autoFillEnabled || !storedProfile) return;
+    if (!autoFillEnabled || !storedProfile || isFilling) return;
     clearTimeout(fillDebounce);
     fillDebounce = setTimeout(() => autoFill(storedProfile, true, acceptTermsEnabled), 800);
   });
@@ -754,6 +884,7 @@
     storedProfile = result.profile || null;
     acceptTermsEnabled = settings.autoAcceptTerms !== false;
     if (settings.autoFillOnLoad && storedProfile) {
+      autoFillEnabled = true;
       setTimeout(() => autoFill(storedProfile, true, acceptTermsEnabled), 1500);
     }
   });
