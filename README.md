@@ -33,6 +33,8 @@ Auto-fill job applications on Workday, Greenhouse, Lever, and more. Stop filling
 | Workday (`*.myworkdayjobs.com`) | ⭐⭐⭐ Full |
 | Greenhouse | ⭐⭐⭐ Full |
 | Lever | ⭐⭐⭐ Full |
+| LinkedIn | ⭐⭐ Good |
+| Naukri | ⭐⭐ Good |
 | Jobvite | ⭐⭐ Good |
 | SmartRecruiters | ⭐⭐ Good |
 | iCIMS | ⭐⭐ Good |

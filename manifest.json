@@ -18,6 +18,7 @@
     "https://*.icims.com/*",
     "https://*.taleo.net/*",
     "https://*.successfactors.com/*",
+    "https://*.naukri.com/*",
     "<all_urls>"
   ],
   "action": {
