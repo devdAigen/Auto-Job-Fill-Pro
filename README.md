@@ -19,7 +19,7 @@ Auto-fill job applications on Workday, Greenhouse, Lever, and more. Stop filling
 
 1. Click the ⚡ JobFill Pro icon in your toolbar
 2. Go to the **Profile** tab and fill in your details
-3. Upload your resume (PDF or DOC)
+3. Upload your resume (PDF or TXT)
 4. Click **"Save Profile"**
 5. Navigate to a job application page (e.g., Workday)
 6. Click the extension → **Fill** tab → **"⚡ Fill This Page Now"**
@@ -47,7 +47,7 @@ Auto-fill job applications on Workday, Greenhouse, Lever, and more. Stop filling
 
 ### Profile Tab
 - Store all personal, professional, and education details
-- Upload and store your resume (PDF/DOC up to 5MB)
+- Upload and store your resume (PDF/TXT up to 5MB)
 - Work authorization settings
 
 ### Fill Tab

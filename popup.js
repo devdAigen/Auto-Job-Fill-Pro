@@ -193,7 +193,7 @@ function exportBackup() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       showResult("Backup exported successfully");
       setBackupStatus("Backup downloaded to your device.");
     });
@@ -585,18 +585,23 @@ uploadZone.addEventListener("drop", e => {
 resumeFileInput.addEventListener("change", () => { if (resumeFileInput.files[0]) handleResumeFile(resumeFileInput.files[0]); });
 
 function handleResumeFile(file) {
-  const allowedExts = [".pdf", ".doc", ".docx", ".txt"];
+  const allowedExts = [".pdf", ".txt"];
   const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-  if (!allowedExts.includes(ext)) { showResult("Only PDF, DOC, TXT supported", "error"); return; }
+  if (!allowedExts.includes(ext)) { showResult("Only PDF and TXT resumes can be parsed", "error"); return; }
   if (file.size > 5 * 1024 * 1024) { showResult("File too large (max 5MB)", "error"); return; }
   const reader = new FileReader();
   reader.onload = e => {
-    resumeData = { fileName: file.name, fileData: e.target.result.split(",")[1], mimeType: file.type || "application/pdf" };
+    resumeData = { fileName: file.name, fileData: e.target.result.split(",")[1], mimeType: file.type || (ext === ".pdf" ? "application/pdf" : "text/plain") };
     document.getElementById("resumeFileName").textContent = `✓ ${file.name}`;
     document.getElementById("parseResumeBtn").style.display = "flex";
     setSaveStatus("Unsaved changes");
   };
   reader.readAsDataURL(file);
+}
+
+function decodeBase64Text(base64) {
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 // ─── AI Resume Parser ──────────────────────────────────────────────────────────
@@ -641,10 +646,10 @@ document.getElementById("parseResumeBtn").addEventListener("click", async () => 
   parseStatus.style.display = "block"; parseMsg.textContent = "Sending resume to AI...";
 
   try {
-    const isPDF = resumeData.mimeType === "application/pdf" || resumeData.fileName.endsWith(".pdf");
+    const isPDF = resumeData.mimeType === "application/pdf" || resumeData.fileName.toLowerCase().endsWith(".pdf");
     const messages = isPDF
       ? [{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: resumeData.fileData } }, { type: "text", text: RESUME_PARSE_PROMPT }] }]
-      : [{ role: "user", content: `Resume:\n\n${atob(resumeData.fileData)}\n\n${RESUME_PARSE_PROMPT}` }];
+      : [{ role: "user", content: `Resume:\n\n${decodeBase64Text(resumeData.fileData)}\n\n${RESUME_PARSE_PROMPT}` }];
 
     parseMsg.textContent = "AI is reading your resume...";
 

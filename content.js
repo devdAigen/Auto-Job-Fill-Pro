@@ -208,6 +208,11 @@
       labels: ["gpa", "cgpa", "grade", "percentage", "marks"],
       workdayIds: []
     },
+    employeeId: {
+      keys: ["employeeid", "employee_id", "empid", "emp_id"],
+      labels: ["employee id", "employee identification", "emp id"],
+      workdayIds: []
+    },
     workAuthorized: {
       keys: ["authorized", "workauthorization", "legallyauthorized"],
       labels: ["authorized to work", "work authorization", "legally authorized", "eligible to work"],
@@ -231,18 +236,69 @@
   };
 
   // ─── React Input Setters ──────────────────────────────────────────────────
+  const DEBUG_FILL_EVENTS = true;
+
+  function describeFillElement(el) {
+    if (!el) return null;
+    let label = "";
+    try { label = getLabelText(el); } catch {}
+    return {
+      tag: el.tagName || "",
+      type: el.type || "",
+      id: el.id || "",
+      name: el.name || "",
+      className: String(el.className || ""),
+      role: el.getAttribute?.("role") || "",
+      ariaLabel: el.getAttribute?.("aria-label") || "",
+      ariaHaspopup: el.getAttribute?.("aria-haspopup") || "",
+      ariaOwns: el.getAttribute?.("aria-owns") || "",
+      ariaControls: el.getAttribute?.("aria-controls") || "",
+      dataAutomationId: el.getAttribute?.("data-automation-id") || "",
+      value: el.value || "",
+      label,
+      platform: currentPlatform.id
+    };
+  }
+
+  function debugFillPoint(stage, el, value, extra = {}) {
+    if (!DEBUG_FILL_EVENTS) return;
+    try {
+      console.groupCollapsed(`[JobFill Debug] ${stage}`);
+      console.log("element", describeFillElement(el));
+      console.log("value", value);
+      if (Object.keys(extra).length) console.log("extra", extra);
+      console.trace("trace");
+      console.groupEnd();
+    } catch (err) {
+      try { console.log("[JobFill Debug]", stage, err?.message || err); } catch {}
+    }
+  }
+
   function setReactInputValue(el, value) {
+    debugFillPoint("setReactInputValue:before-set", el, value);
     try {
       const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
       if (proto?.set) proto.set.call(el, value); else el.value = value;
-    } catch { try { el.value = value; } catch {} }
-    try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-    try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+      debugFillPoint("setReactInputValue:after-set", el, value);
+    } catch (err) {
+      debugFillPoint("setReactInputValue:set-error", el, value, { error: err?.message || String(err) });
+      try { el.value = value; } catch {}
+    }
+    debugFillPoint("setReactInputValue:before-input-event", el, value);
+    try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (err) { debugFillPoint("setReactInputValue:input-error", el, value, { error: err?.message || String(err) }); }
+    debugFillPoint("setReactInputValue:after-input-event", el, value);
+    debugFillPoint("setReactInputValue:before-change-event", el, value);
+    try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch (err) { debugFillPoint("setReactInputValue:change-error", el, value, { error: err?.message || String(err) }); }
+    debugFillPoint("setReactInputValue:after-change-event", el, value);
     // IMPORTANT: Do NOT dispatch keydown/keyup on Workday — it triggers internal
     // React navigation that fetches community.workday.com causing a CORS crash.
     if (currentPlatform.id !== "workday") {
-      try { el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true })); } catch {}
-      try { el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true })); } catch {}
+      debugFillPoint("setReactInputValue:before-keydown-event", el, value);
+      try { el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true })); } catch (err) { debugFillPoint("setReactInputValue:keydown-error", el, value, { error: err?.message || String(err) }); }
+      debugFillPoint("setReactInputValue:after-keydown-event", el, value);
+      debugFillPoint("setReactInputValue:before-keyup-event", el, value);
+      try { el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true })); } catch (err) { debugFillPoint("setReactInputValue:keyup-error", el, value, { error: err?.message || String(err) }); }
+      debugFillPoint("setReactInputValue:after-keyup-event", el, value);
     }
   }
 
@@ -265,6 +321,33 @@
     const cls = (el.className || "").trim();
     // Workday internal inputs have a single generated css-XXXXX class and no label
     if (/^css-[a-z0-9]+$/.test(cls) && !getLabelText(el)) return true;
+    return false;
+  }
+
+  function isWorkdayManagedPickerInput(el) {
+    if (currentPlatform.id !== "workday") return false;
+    if (el.tagName?.toLowerCase() !== "input") return false;
+
+    const type = (el.type || "").toLowerCase();
+    if (!["text", "search", ""].includes(type)) return false;
+
+    const attrs = [
+      el.getAttribute("role"),
+      el.getAttribute("aria-haspopup"),
+      el.getAttribute("aria-owns"),
+      el.getAttribute("aria-controls"),
+      el.getAttribute("aria-expanded"),
+      el.getAttribute("data-automation-id"),
+      el.getAttribute("aria-label"),
+      el.name,
+      el.id,
+      getLabelText(el)
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    if (/\b(combobox|listbox|prompt|country|country\/region|region|state|province|phone device type|phone country code|country code)\b/.test(attrs)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -336,7 +419,74 @@
     return (el.placeholder || el.getAttribute("data-placeholder") || el.title || el.name || "").toLowerCase();
   }
 
+  function escapeForRegex(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function textMatchesWordBoundary(containerText, phrase) {
+    if (!containerText || !phrase) return false;
+    const normalized = phrase.trim().toLowerCase();
+    if (!normalized) return false;
+    if (/\s/.test(normalized) || normalized.length <= 3) {
+      return containerText.includes(normalized);
+    }
+    const regex = new RegExp("\\b" + escapeForRegex(normalized) + "\\b", "i");
+    return regex.test(containerText);
+  }
+
+  function isSelectFilled(selectEl) {
+    const selected = selectEl.options[selectEl.selectedIndex];
+    if (!selected) return false;
+    const text = (selected.text || "").trim();
+    const value = (selected.value || "").trim();
+    if (!text && !value) return false;
+    return !/^(select|choose|please|optional)/i.test(text);
+  }
+
+  function isButtonDropdownFilled(btn) {
+    const text = (btn.textContent || "").trim();
+    const aria = (btn.getAttribute("aria-label") || "").trim();
+    const current = text || aria;
+    if (!current) return false;
+    return !/^(select|choose|please|optional|required)/i.test(current.toLowerCase());
+  }
+
+  function isRadioGroupFilled(group) {
+    return group.some(r => r.checked);
+  }
+
   // ─── Field Matcher ────────────────────────────────────────────────────────
+  const EXACT_ONLY_KEYS = new Set([
+    "fname",
+    "lname",
+    "name",
+    "title",
+    "position",
+    "location",
+    "state",
+    "country",
+    "field",
+    "school",
+    "degree",
+    "experience",
+    "notice",
+    "remote",
+    "website",
+    "address",
+    "street",
+    "zip",
+    "phone",
+    "email"
+  ]);
+
+  function normalizedAttrMatches(attr, key) {
+    if (!attr || !key) return false;
+    const normalizedKey = key.toLowerCase().replace(/[-\s]/g, "");
+    if (attr === normalizedKey) return true;
+    if (EXACT_ONLY_KEYS.has(normalizedKey)) return false;
+    return normalizedKey.length >= 4 && attr.includes(normalizedKey);
+  }
+
   function matchField(el) {
     const name = (el.name || "").toLowerCase().replace(/[-\s]/g, "");
     const id = (el.id || "").toLowerCase().replace(/[-\s]/g, "");
@@ -350,12 +500,15 @@
           if (automationId.includes(wdId.toLowerCase())) return fieldKey;
         }
       }
-      for (const key of mapping.keys) {
-        if (name === key || id === key) return fieldKey;
-        if (name.includes(key) || id.includes(key)) return fieldKey;
-      }
       for (const lbl of mapping.labels) {
-        if (labelText.includes(lbl) || placeholder.includes(lbl)) return fieldKey;
+        const normalizedLabel = lbl.toLowerCase();
+        if (textMatchesWordBoundary(labelText, normalizedLabel) || textMatchesWordBoundary(placeholder, normalizedLabel)) return fieldKey;
+      }
+    }
+
+    for (const [fieldKey, mapping] of Object.entries(FIELD_MAPPINGS)) {
+      for (const key of mapping.keys) {
+        if (normalizedAttrMatches(name, key) || normalizedAttrMatches(id, key)) return fieldKey;
       }
     }
     return null;
@@ -447,7 +600,7 @@
       ["reference", "contact", "referee"],
       ["cover", "letter", "introduce", "yourself", "summary", "about"],
       ["employed", "employment", "work", "worked", "previously", "before", "past"],
-      ["honeywell", "company", "employer", "subsidiary", "intern", "contract"]
+      ["company", "employer", "subsidiary", "intern", "contract"]
     ];
 
     let synonymBoost = 0;
@@ -494,12 +647,12 @@
     if (!value) return false;
     try {
       el.click(); el.focus();
-      await new Promise(r => setTimeout(r, 400));
+    //  await new Promise(r => setTimeout(r, 400));
       const optSels = '[role="option"], [data-automation-id*="option"], [data-automation-id*="Option"], li[role="option"]';
       let options = document.querySelectorAll(optSels);
-      if (options.length === 0 && el.tagName === "INPUT") {
+      if (options.length === 0 && el.tagName === "INPUT" && !isWorkdayManagedPickerInput(el)) {
         setReactInputValue(el, value);
-        await new Promise(r => setTimeout(r, 500));
+      //  await new Promise(r => setTimeout(r, 500));
         options = document.querySelectorAll(optSels);
       }
       if (options.length > 0) {
@@ -509,9 +662,13 @@
           o.textContent.toLowerCase().includes(desired) ||
           desired.includes(o.textContent.toLowerCase().trim())
         );
-        if (match) { match.click(); await new Promise(r => setTimeout(r, 200)); return true; }
+        if (match) { match.click();
+          // await new Promise(r => setTimeout(r, 200)); 
+           return true; }
       }
-    } catch {}
+    } catch {
+      console.log("error in fillWorkdayCombobox")
+    }
     return false;
   }
 
@@ -520,26 +677,48 @@
     if (!value) return false;
     if (el.disabled || el.readOnly) return false;
     if (isWorkdayInternalInput(el)) return false;
+    if (isWorkdayManagedPickerInput(el)) return false;
 
     if (skipFilled) {
       const currentVal = (el.value || "").trim();
       const placeholder = el.getAttribute("placeholder") || el.getAttribute("data-placeholder") || "";
 
-      // Standard check: has a real value (not just the placeholder text)
-      if (currentVal && currentVal !== placeholder) return false;
+      // If there's no meaningful current value, allow filling
+      if (!currentVal || currentVal === placeholder) {
+        // proceed to fill
+      } else {
+        // Detect token-like / generated internal values (hex, random ids) which shouldn't block filling
+        let isTokenLike = false;
+        try {
+          if (/^[0-9a-f]{6,}$/i.test(currentVal)) isTokenLike = true;
+          if (/^[A-Za-z0-9_-]{8,}$/i.test(currentVal) && !/\s/.test(currentVal)) isTokenLike = true;
+        } catch {}
 
-      // Workday: fields show current value in aria-label as "<Label> <Value> Required"
-      // e.g. aria-label=" India Required" means India is already selected
+        if (isTokenLike && currentPlatform.id === "workday") {
+          const ariaLabel = (el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().toLowerCase();
+          const fieldLabel = getLabelText(el).toLowerCase();
+          const stripped = ariaLabel.replace(fieldLabel, "").replace(/\brequired\b/gi, "").trim();
+          // If aria-label contains a human-friendly value, treat as filled; otherwise allow overwrite
+          if (stripped && stripped.length > 1) {
+            console.log("[JobFill] Workday skip already filled (aria):", stripped.slice(0, 50));
+            return false;
+          }
+          // else treat token-like value as not a real filled value and continue to fill
+        } else {
+          // Non-token or non-Workday: consider field filled and skip
+          return false;
+        }
+      }
+
+      // Workday: fallback check using aria-label for visible values (unchanged behavior)
       if (currentPlatform.id === "workday") {
         const ariaLabel = (el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().toLowerCase();
         const fieldLabel = getLabelText(el).toLowerCase();
         if (ariaLabel && fieldLabel) {
-          // Extract value portion: aria-label minus the field label and "required"
           const stripped = ariaLabel
             .replace(fieldLabel, "")
             .replace(/\brequired\b/gi, "")
             .trim();
-          // If there's meaningful content remaining, field is already filled
           if (stripped && stripped.length > 1) {
             console.log("[JobFill] Workday skip already filled:", stripped, "in", ariaLabel.slice(0, 50));
             return false;
@@ -604,16 +783,68 @@
   }
 
   // ─── Fuzzy Custom Answers ─────────────────────────────────────────────────
+  function findVisibleAutocompleteInput(el) {
+    const container = el.closest(".fieldcontain, .form-group, .form-field, .control-group, .question, .form-row, .field-group, .input-group, fieldset");
+    if (!container) return null;
+    const inputs = Array.from(container.querySelectorAll('input[type="search"], input.ui-autocomplete-input, input[role="listbox"], input[type="text"]'));
+    return inputs.find(input => input !== el && !input.disabled && !input.readOnly && input.offsetParent !== null) || null;
+  }
+
+  function fillAnswerElement(el, answer) {
+    if (isWorkdayManagedPickerInput(el)) {
+      debugFillPoint("fillAnswerElement:skip-workday-managed-picker", el, answer);
+      return false;
+    }
+
+    const tag = el.tagName.toLowerCase();
+    const type = (el.type || "").toLowerCase();
+    debugFillPoint("fillAnswerElement:start", el, answer, { tag, type });
+
+    if (tag === "textarea") {
+      debugFillPoint("fillAnswerElement:textarea", el, answer);
+      setReactTextareaValue(el, answer);
+      return true;
+    }
+
+    if (tag === "select") {
+      debugFillPoint("fillAnswerElement:select", el, answer);
+      if (fillSelectBestMatch(el, answer)) {
+        debugFillPoint("fillAnswerElement:select-native-filled", el, answer);
+        return true;
+      }
+      const autocompleteInput = findVisibleAutocompleteInput(el);
+      if (autocompleteInput && !isWorkdayManagedPickerInput(autocompleteInput)) {
+        debugFillPoint("fillAnswerElement:select-autocomplete-input", autocompleteInput, answer, { sourceSelect: describeFillElement(el) });
+        setReactInputValue(autocompleteInput, answer);
+        return true;
+      }
+      debugFillPoint("fillAnswerElement:select-not-filled", el, answer, { autocompleteInput: describeFillElement(autocompleteInput) });
+      return false;
+    }
+
+    if (["text", "search", ""].includes(type)) {
+      debugFillPoint("fillAnswerElement:text-input", el, answer);
+      setReactInputValue(el, answer);
+      return true;
+    }
+
+    debugFillPoint("fillAnswerElement:unsupported", el, answer, { tag, type });
+    return false;
+  }
+
   function fillCustomAnswers(customAnswers) {
     if (!customAnswers?.length) return 0;
     console.log("[JobFill] fillCustomAnswers called with", customAnswers.length, "items");
     let count = 0;
     const candidates = [
       ...document.querySelectorAll("textarea"),
-      ...document.querySelectorAll('input[type="text"]')
+      ...document.querySelectorAll('input[type="text"], input[type="search"]'),
+      ...document.querySelectorAll("select")
     ];
     candidates.forEach(el => {
-      if (el.value?.trim()) return;
+      if (el.tagName.toLowerCase() === "select") {
+        if (isSelectFilled(el)) return;
+      } else if (el.value?.trim()) return;
       const label = getLabelText(el);
       const ph = (el.placeholder || "").toLowerCase();
       const combined = (label + " " + ph).trim();
@@ -627,11 +858,16 @@
       });
       if (bestMatch) {
         console.log("[JobFill] Matched custom answer:", bestMatch.question, "score:", bestScore, "field:", combined);
-        el.tagName.toLowerCase() === "textarea"
-          ? setReactTextareaValue(el, bestMatch.answer)
-          : setReactInputValue(el, bestMatch.answer);
-        count++;
-        customAnswers.splice(bestIndex, 1); // Remove used answer
+        debugFillPoint("fillCustomAnswers:best-match", el, bestMatch.answer, {
+          question: bestMatch.question,
+          score: bestScore,
+          field: combined,
+          index: bestIndex
+        });
+        if (fillAnswerElement(el, bestMatch.answer)) {
+          count++;
+          customAnswers.splice(bestIndex, 1); // Remove used answer
+        }
       }
     });
     return count;
@@ -677,7 +913,7 @@
     try {
       buttonEl.focus();
       buttonEl.click();
-      await new Promise(r => setTimeout(r, 300));
+     // await new Promise(r => setTimeout(r, 300));
 
       const options = Array.from(document.querySelectorAll('[role="option"], [data-automation-id*="option"], [data-automation-id*="Option"], li[role="option"], div[role="option"], button[role="option"]'));
       const desired = desiredAnswer.toLowerCase().trim();
@@ -690,7 +926,7 @@
 
       if (match) {
         match.click();
-        await new Promise(r => setTimeout(r, 200));
+      //  await new Promise(r => setTimeout(r, 200));
         return true;
       }
     } catch (e) {}
@@ -705,6 +941,7 @@
 
     // Handle <select> dropdowns
     document.querySelectorAll("select").forEach(sel => {
+      if (isSelectFilled(sel)) return;
       const label = getLabelText(sel);
       const ph = (sel.placeholder || "").toLowerCase();
       const combined = (label + " " + ph).trim();
@@ -718,7 +955,7 @@
       });
       if (bestMatch) {
         console.log("[JobFill] Yes/No select match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
-        if (fillSelectBestMatch(sel, bestMatch.answer)) {
+        if (fillAnswerElement(sel, bestMatch.answer)) {
           count++;
           yesNoAnswers.splice(bestIndex, 1); // Remove used answer
         }
@@ -729,6 +966,7 @@
     if (currentPlatform.id === "workday") {
       const buttonCandidates = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"], button[role="combobox"], [role="combobox"]'));
       for (const btn of buttonCandidates) {
+        if (isButtonDropdownFilled(btn)) continue;
         const label = getLabelText(btn);
         const ph = (btn.getAttribute("aria-label") || "").toLowerCase();
         const combined = (label + " " + ph).trim();
@@ -761,6 +999,7 @@
 
     for (const group of Object.values(groups)) {
       if (group.length < 2) continue;
+      if (isRadioGroupFilled(group)) continue;
       const label = getLabelText(group[0]);
       if (!label) continue;
 
@@ -905,7 +1144,7 @@
     const existingListbox = document.querySelector('[role="listbox"]');
     if (existingListbox) {
       document.body.click();
-      await new Promise(r => setTimeout(r, 400));
+      //await new Promise(r => setTimeout(r, 200));
     }
 
     try {
@@ -913,22 +1152,22 @@
       btn.click();
 
       // Poll for options instead of fixed delay — faster and more reliable
-      let options = [];
-      for (let attempt = 0; attempt < 8; attempt++) {
-        await new Promise(r => setTimeout(r, 200));
-        for (const sel of ['[role="listbox"] [role="option"]', '[role="option"]', '[data-automation-id*="option"]', 'ul[role="listbox"] li']) {
-          options = Array.from(document.querySelectorAll(sel));
-          if (options.length) break;
-        }
-        if (options.length) break;
-      }
+      let options =  openDropdownAndGetOptions(btn);
+      // for (let attempt = 0; attempt < 8; attempt++) {
+      // //  await new Promise(r => setTimeout(r, 200));
+      //   for (const sel of ['[role="listbox"] [role="option"]', '[role="option"]', '[data-automation-id*="option"]', 'ul[role="listbox"] li']) {
+      //     options = Array.from(document.querySelectorAll(sel));
+      //     if (options.length) break;
+      //   }
+      //   if (options.length) break;
+      // }
       console.log("[JobFill Workday] Options found:", options.length);
 
       if (!options.length) {
         // Close gracefully
         try { btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); } catch {}
         document.body.click();
-        await new Promise(r => setTimeout(r, 300));
+      //  await new Promise(r => setTimeout(r, 300));
         return false;
       }
 
@@ -943,16 +1182,18 @@
         console.log("[JobFill Workday] Clicking option:", match.textContent.trim());
         match.click();
         // Wait for listbox to fully close before next dropdown
-        await new Promise(r => setTimeout(r, 500));
+       // await new Promise(r => setTimeout(r, 500));
         const stillOpen = document.querySelector('[role="listbox"]');
-        if (stillOpen) { document.body.click(); await new Promise(r => setTimeout(r, 300)); }
+        if (stillOpen) { document.body.click();
+          // await new Promise(r => setTimeout(r, 300)); 
+          }
         return true;
       }
 
       // No match — close cleanly
       try { btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); } catch {}
       document.body.click();
-      await new Promise(r => setTimeout(r, 300));
+    //  await new Promise(r => setTimeout(r, 300));
       return false;
 
     } catch (e) {
@@ -981,13 +1222,33 @@
     } catch { return legendText.includes(fieldLabel); }
   }
 
+  function hasMeaningfulValue(el) {
+
+  const text =
+    el.value?.trim() ||
+    el.textContent?.trim();
+
+  if (!text) return false;
+
+  const invalidValues = [
+    'select',
+    'select one',
+    'choose',
+    'none'
+  ];
+
+  return !invalidValues.includes(
+    text.toLowerCase()
+  );
+}
+
   async function fillAllWorkdayComboboxes(profile) {
     if (currentPlatform.id !== "workday") return;
 
     // Close any already-open listbox first
     if (document.querySelector('[role="listbox"]')) {
       document.body.click();
-      await new Promise(r => setTimeout(r, 400));
+     //      await new Promise(r => setTimeout(r, 400));
     }
 
     const dropdownBtns = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"]'));
@@ -1054,9 +1315,13 @@
         continue;
       }
 
+      if(hasMeaningfulValue(btn)){
+        console.log("[JobFill Workday] Skipping already filled dropdown:", legendText.slice(0, 60), "current value:", btn.textContent.trim().slice(0,30));
+        continue;
+      }
       await fillWorkdayButtonDropdown(btn, valueToSet);
       // Mandatory gap — let Workday React settle between dropdowns
-      await new Promise(r => setTimeout(r, 600));
+     // await new Promise(r => setTimeout(r, 600));
     }
 
     // SECONDARY: role="combobox" non-button elements
@@ -1067,9 +1332,55 @@
       const value = getProfileValue(fieldKey, profile);
       if (!value) continue;
       await fillWorkdayCombobox(el, value);
-      await new Promise(r => setTimeout(r, 400));
+     //      await new Promise(r => setTimeout(r, 400));
     }
   }
+
+  async function openDropdownAndGetOptions(btn) {
+
+  btn.focus();
+
+  btn.dispatchEvent(new MouseEvent('mousedown', {
+    bubbles: true
+  }));
+
+  btn.click();
+
+  let listbox;
+
+  for (let i = 0; i < 30; i++) {
+
+    await new Promise(r => setTimeout(r, 100));
+
+    const visibleBoxes = [...document.querySelectorAll('[role="listbox"]')]
+      .filter(lb => {
+
+        const rect = lb.getBoundingClientRect();
+
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          getComputedStyle(lb).visibility !== 'hidden'
+        );
+      });
+
+    // usually latest opened dropdown
+    listbox = visibleBoxes.at(-1);
+
+    if (listbox) {
+
+      const options = [
+        ...listbox.querySelectorAll('[role="option"]')
+      ];
+
+      if (options.length) {
+        return options;
+      }
+    }
+  }
+
+  return [];
+}
 
 
   // ─── Main Auto-Fill ───────────────────────────────────────────────────────
@@ -1078,6 +1389,7 @@
     isFilling = true;
     console.log("[JobFill] autoFill start — customAnswers:", profile.customAnswers?.length, "customFields:", profile.customFields?.length, "yesNoAnswers:", profile.yesNoAnswers?.length);
     const results = { filled: 0, skipped: 0, errors: [], fields: [] };
+    try {
 
     // Track every DOM element we fill — prevents same input being matched by two
     // different field keys (e.g. "country" and "countryCode" both matching one input)
@@ -1125,8 +1437,10 @@
     }
 
     console.log("[JobFill] autoFill done — filled:", results.filled, "skipped:", results.skipped);
-    isFilling = false;
     return results;
+    } finally {
+      isFilling = false;
+    }
   }
 
   // ─── Naukri Chatbot Handler ───────────────────────────────────────────────
@@ -1146,7 +1460,7 @@
 
   async function fillNaukriChatbot(profile) {
     if (naukriFillCount++ > 25) { naukriFillCount = 0; return; }
-    await new Promise(r => setTimeout(r, 700));
+         await new Promise(r => setTimeout(r, 700));
 
     const questionText = getNaukriQuestion();
     if (!questionText) { console.log("[JobFill Naukri] No question found"); return; }
@@ -1218,8 +1532,8 @@
           targetRadio.click();
           // Also click the label (Naukri uses label click to trigger submission)
           const lbl = document.querySelector(`label[for="${targetRadio.id}"]`);
-          if (lbl) { await new Promise(r => setTimeout(r, 100)); lbl.click(); }
-          await new Promise(r => setTimeout(r, 1800));
+          if (lbl) {//      await new Promise(r => setTimeout(r, 100)); lbl.click(); }
+         //      await new Promise(r => setTimeout(r, 1800));
           fillNaukriChatbot(profile); // recurse for next question
           return;
         } else {
@@ -1296,6 +1610,7 @@
       fillNaukriChatbot(profile);
     }
   }
+}
 
   // ─── Clear All Fields ─────────────────────────────────────────────────────
   function clearAllFields() {
@@ -1363,11 +1678,27 @@
     const creds = result.credentials || [];
     if (!creds.length) return;
 
-    const url = window.location.href;
+    const host = window.location.hostname.toLowerCase();
 
-    // Specific URL match first, then fallback to blank URL (wildcard)
-    const matched = creds.find(c => c.siteUrl && url.includes(c.siteUrl))
-                 || creds.find(c => !c.siteUrl); // blank = all sites
+    function normalizeCredentialHost(pattern) {
+      const raw = String(pattern || "").trim().toLowerCase();
+      if (!raw) return "";
+      try {
+        return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname;
+      } catch {
+        return raw.replace(/^https?:\/\//, "").split("/")[0].split("?")[0].split("#")[0];
+      }
+    }
+
+    function credentialMatchesCurrentHost(cred) {
+      const patternHost = normalizeCredentialHost(cred.siteUrl);
+      if (!patternHost) return false;
+      return host === patternHost || host.endsWith(`.${patternHost}`);
+    }
+
+    // Specific domain match first, then blank credentials only on detected job sites.
+    const matched = creds.find(credentialMatchesCurrentHost)
+                 || (currentPlatform.id !== "generic" ? creds.find(c => !c.siteUrl) : null);
 
     if (!matched) return;
 
