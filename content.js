@@ -13,7 +13,8 @@
     icims: { match: /icims\.com/, name: "iCIMS" },
     taleo: { match: /taleo\.net/, name: "Taleo" },
     successfactors: { match: /successfactors\.com/, name: "SuccessFactors" },
-    naukri: { match: /naukri\.com/, name: "Naukri" }
+    naukri: { match: /naukri\.com/, name: "Naukri" },
+    linkedin: { match: /linkedin\.com/, name: "LinkedIn" }
   };
 
   function detectPlatform() {
@@ -109,7 +110,7 @@
       workdayIds: ["addressSection_countryRegion"]
     },
     country: {
-      keys: ["country", "countrycode", "country_code"],
+      keys: ["country","nation","nationality"],
       labels: ["country"],
       workdayIds: ["addressSection_country"]
     },
@@ -236,7 +237,7 @@
   };
 
   // ─── React Input Setters ──────────────────────────────────────────────────
-  const DEBUG_FILL_EVENTS = true;
+  const DEBUG_FILL_EVENTS = false;
 
   function describeFillElement(el) {
     if (!el) return null;
@@ -331,13 +332,21 @@
     const type = (el.type || "").toLowerCase();
     if (!["text", "search", ""].includes(type)) return false;
 
+    // Workday multiselect widgets (e.g. Country Phone Code) render a search <input>
+    // with data-automation-id="searchBox" inside a data-uxi-widget-type="multiselect"
+    // container. Filling this input directly re-opens the dropdown in a loop.
+    const automationId = (el.getAttribute("data-automation-id") || "").toLowerCase();
+    if (automationId === "searchbox") return true;
+    if (el.getAttribute("data-uxi-widget-type") === "selectinput") return true;
+    if (el.closest('[data-uxi-widget-type="multiselect"], [data-automation-id="multiSelectContainer"]')) return true;
+
     const attrs = [
       el.getAttribute("role"),
       el.getAttribute("aria-haspopup"),
       el.getAttribute("aria-owns"),
       el.getAttribute("aria-controls"),
       el.getAttribute("aria-expanded"),
-      el.getAttribute("data-automation-id"),
+      automationId,
       el.getAttribute("aria-label"),
       el.name,
       el.id,
@@ -397,6 +406,20 @@
         );
         if (nearLabel && !nearLabel.contains(el)) { const t = clean(nearLabel); if (t) return t; }
         ancestor = ancestor.parentElement;
+      }
+    }
+
+    // LinkedIn Easy Apply: ancestor walk for span/div labels
+    if (currentPlatform.id === "linkedin") {
+      let ancestor = el.parentElement;
+      while (ancestor) {
+        if (ancestor.matches("label, legend")) return clean(ancestor);
+        const nearLabel = ancestor.querySelector(
+          "label, legend, .fb-form-element__label, [class*='label'], span[data-test-single-line-text-form-component__title]"
+        );
+        if (nearLabel && !nearLabel.contains(el)) { const t = clean(nearLabel); if (t) return t; }
+        ancestor = ancestor.parentElement;
+        if (ancestor?.classList?.contains("jobs-easy-apply-modal")) break;
       }
     }
 
@@ -962,8 +985,8 @@
       }
     });
 
-    // Handle button dropdowns (Workday-style custom listboxes)
-    if (currentPlatform.id === "workday") {
+    // Handle button dropdowns (Workday-style custom listboxes, and LinkedIn)
+    if (currentPlatform.id === "workday" || currentPlatform.id === "linkedin") {
       const buttonCandidates = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"], button[role="combobox"], [role="combobox"]'));
       for (const btn of buttonCandidates) {
         if (isButtonDropdownFilled(btn)) continue;
@@ -1144,23 +1167,13 @@
     const existingListbox = document.querySelector('[role="listbox"]');
     if (existingListbox) {
       document.body.click();
-      //await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 200));
     }
 
     try {
       console.log("[JobFill Workday] Opening dropdown for:", value);
-      btn.click();
-
-      // Poll for options instead of fixed delay — faster and more reliable
-      let options =  openDropdownAndGetOptions(btn);
-      // for (let attempt = 0; attempt < 8; attempt++) {
-      // //  await new Promise(r => setTimeout(r, 200));
-      //   for (const sel of ['[role="listbox"] [role="option"]', '[role="option"]', '[data-automation-id*="option"]', 'ul[role="listbox"] li']) {
-      //     options = Array.from(document.querySelectorAll(sel));
-      //     if (options.length) break;
-      //   }
-      //   if (options.length) break;
-      // }
+      // openDropdownAndGetOptions handles focus + click internally; do not click twice.
+      const options = await openDropdownAndGetOptions(btn);
       console.log("[JobFill Workday] Options found:", options.length);
 
       if (!options.length) {
@@ -1223,27 +1236,51 @@
   }
 
   function hasMeaningfulValue(el) {
+    // For Workday multiselect widgets (e.g. Country Phone Code), the "value" lives
+    // as a pill inside data-automation-id="selectedItemList". Check for any pill
+    // that isn't a placeholder before falling through to text/value checks.
+    if (currentPlatform.id === "workday") {
+      const formField = el.closest('[data-automation-id^="formField"]');
+      if (formField) {
+        const pills = formField.querySelectorAll('[data-automation-id="selectedItem"]');
+        if (pills.length > 0) return true;
+      }
+    }
 
-  const text =
-    el.value?.trim() ||
-    el.textContent?.trim();
+    // For Workday button dropdowns, after selection React updates aria-label to
+    // e.g. "State India" or "Country Phone Code United States (+1)".
+    // Strip the field label prefix to isolate the actual selected value.
+    if (el.tagName?.toLowerCase() === "button" && currentPlatform.id === "workday") {
+      const ariaLabel = (el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+      const fieldLabel = getLabelText(el);
+      if (ariaLabel && fieldLabel) {
+        const stripped = ariaLabel
+          .replace(new RegExp(fieldLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "")
+          .replace(/\brequired\b/gi, "")
+          .replace(/\bselect one\b/gi, "")
+          .trim();
+        if (stripped.length > 1) return true;
+      }
+    }
 
-  if (!text) return false;
+    const text =
+      el.value?.trim() ||
+      el.textContent?.trim();
 
-  const invalidValues = [
-    'select',
-    'select one',
-    'choose',
-    'none'
-  ];
+    if (!text) return false;
 
-  return !invalidValues.includes(
-    text.toLowerCase()
-  );
-}
+    const invalidValues = [
+      'select',
+      'select one',
+      'choose',
+      'none'
+    ];
+
+    return !invalidValues.includes(text.toLowerCase());
+  }
 
   async function fillAllWorkdayComboboxes(profile) {
-    if (currentPlatform.id !== "workday") return;
+    if (currentPlatform.id !== "workday" && currentPlatform.id !== "linkedin") return;
 
     // Close any already-open listbox first
     if (document.querySelector('[role="listbox"]')) {
@@ -1251,8 +1288,74 @@
      //      await new Promise(r => setTimeout(r, 400));
     }
 
-    const dropdownBtns = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"]'));
-    console.log("[JobFill Workday] Button dropdowns:", dropdownBtns.length);
+    // ── Workday multiselect pill widgets (e.g. Country Phone Code) ────────────
+    // These render as: formField container → multiSelectContainer → searchBox input
+    // They are NOT button[aria-haspopup="listbox"] so need separate handling.
+    if (currentPlatform.id === "workday") {
+      const multiSelectFields = Array.from(
+        document.querySelectorAll('[data-automation-id="multiSelectContainer"]')
+      );
+      for (const container of multiSelectFields) {
+        // Skip if a pill is already selected
+        const existingPills = container.querySelectorAll('[data-automation-id="selectedItem"]');
+        if (existingPills.length > 0) {
+          console.log("[JobFill Workday] Multiselect already has pill — skipping");
+          continue;
+        }
+
+        // Resolve field label from the nearest formField ancestor
+        const formField = container.closest('[data-automation-id^="formField"]');
+        const labelEl = formField?.querySelector('label');
+        const legendText = (labelEl?.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!legendText) continue;
+
+        // Find a profile value for this field label
+        let valueToSet = null;
+        for (const [fieldKey, mapping] of Object.entries(FIELD_MAPPINGS)) {
+          for (const lbl of mapping.labels) {
+            if (legendMatchesLabel(legendText, lbl)) {
+              const v = getProfileValue(fieldKey, profile);
+              if (v) { valueToSet = v; break; }
+            }
+          }
+          if (valueToSet) break;
+        }
+        if (!valueToSet) continue;
+
+        // Type into the search box and select the first matching option
+        const searchInput = container.querySelector('[data-automation-id="searchBox"]');
+        if (!searchInput) continue;
+        console.log("[JobFill Workday] Multiselect fill:", legendText, "->", valueToSet);
+
+        searchInput.focus();
+        const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+        if (proto?.set) proto.set.call(searchInput, valueToSet); else searchInput.value = valueToSet;
+        searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+        searchInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+        // Wait for options to appear, then pick the best match
+        const options = await openDropdownAndGetOptions(searchInput);
+        if (options.length) {
+          const desired = valueToSet.toLowerCase().trim();
+          const match =
+            options.find(o => o.textContent.toLowerCase().trim() === desired) ||
+            options.find(o => o.textContent.toLowerCase().includes(desired)) ||
+            options.find(o => desired.includes(o.textContent.toLowerCase().trim()) && o.textContent.trim().length > 2);
+          if (match) {
+            console.log("[JobFill Workday] Multiselect option clicked:", match.textContent.trim());
+            match.click();
+          }
+        }
+      }
+    }
+
+    // LinkedIn: handle phone country-code and similar custom button-dropdowns
+    const dropdownBtnSelector = currentPlatform.id === "linkedin"
+      ? 'button[aria-label*="Phone country code" i], button[data-test-text-entity-list-form-select], select[data-test-text-selectable-option]'
+      : 'button[aria-haspopup="listbox"]';
+
+    const dropdownBtns = Array.from(document.querySelectorAll(dropdownBtnSelector));
+    console.log("[JobFill] Button dropdowns:", dropdownBtns.length);
 
     const processedBtns = new Set();
 
@@ -1325,61 +1428,79 @@
     }
 
     // SECONDARY: role="combobox" non-button elements
-    const comboboxes = document.querySelectorAll('[role="combobox"]:not(button), [data-automation-id*="prompt"]:not(button)');
-    for (const el of comboboxes) {
-      const fieldKey = matchField(el);
-      if (!fieldKey) continue;
-      const value = getProfileValue(fieldKey, profile);
-      if (!value) continue;
-      await fillWorkdayCombobox(el, value);
-     //      await new Promise(r => setTimeout(r, 400));
-    }
+    // const comboboxes = document.querySelectorAll('[role="combobox"]:not(button), [data-automation-id*="prompt"]:not(button)');
+    // for (const el of comboboxes) {
+    //   const fieldKey = matchField(el);
+    //   if (!fieldKey) continue;
+    //   const value = getProfileValue(fieldKey, profile);
+    //   if (!value) continue;
+    //   await fillWorkdayCombobox(el, value);
+    //  //      await new Promise(r => setTimeout(r, 400));
+    // }
   }
 
   async function openDropdownAndGetOptions(btn) {
 
   btn.focus();
-
-  btn.dispatchEvent(new MouseEvent('mousedown', {
-    bubbles: true
-  }));
-
+  btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   btn.click();
 
-  let listbox;
+  // Determine which listbox belongs to THIS button.
+  // Workday sets aria-controls on the button pointing to the listbox id.
+  // Using this prevents picking up a concurrently open listbox from a different field
+  // (e.g. country options appearing when state dropdown is clicked).
+  const ownedListboxId = btn.getAttribute("aria-controls");
 
-  for (let i = 0; i < 30; i++) {
-
-    await new Promise(r => setTimeout(r, 100));
-
-    const visibleBoxes = [...document.querySelectorAll('[role="listbox"]')]
-      .filter(lb => {
-
-        const rect = lb.getBoundingClientRect();
-
-        return (
-          rect.width > 0 &&
-          rect.height > 0 &&
-          getComputedStyle(lb).visibility !== 'hidden'
-        );
-      });
-
-    // usually latest opened dropdown
-    listbox = visibleBoxes.at(-1);
-
-    if (listbox) {
-
-      const options = [
-        ...listbox.querySelectorAll('[role="option"]')
-      ];
-
-      if (options.length) {
-        return options;
+  function getOwnedOptions() {
+    let listbox = null;
+    if (ownedListboxId) {
+      listbox = document.getElementById(ownedListboxId);
+    }
+    if (!listbox) {
+      // Fallback: last visible listbox on the page
+      const visibleBoxes = [...document.querySelectorAll('[role="listbox"]')]
+        .filter(lb => {
+          const rect = lb.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && getComputedStyle(lb).visibility !== 'hidden';
+        });
+      listbox = visibleBoxes.at(-1) || null;
+    } else {
+      // Verify the owned listbox is actually visible
+      const rect = listbox.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0 || getComputedStyle(listbox).visibility === 'hidden') {
+        listbox = null;
       }
     }
+    if (!listbox) return [];
+    return [...listbox.querySelectorAll('[role="option"]')];
   }
 
-  return [];
+  // Wait for options using MutationObserver — resolves as soon as options appear
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      obs.disconnect();
+      resolve([]);
+    }, 2000);
+
+    const obs = new MutationObserver(() => {
+      const options = getOwnedOptions();
+      if (options.length) {
+        clearTimeout(timeout);
+        obs.disconnect();
+        resolve(options);
+      }
+    });
+
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    // Check immediately in case the dropdown rendered synchronously
+    const immediate = getOwnedOptions();
+    if (immediate.length) {
+      clearTimeout(timeout);
+      obs.disconnect();
+      resolve(immediate);
+    }
+  });
 }
 
 
@@ -1530,10 +1651,13 @@
         if (targetRadio) {
           console.log("[JobFill Naukri] Clicking radio:", targetRadio.value);
           targetRadio.click();
-          // Also click the label (Naukri uses label click to trigger submission)
+          // Click the label too — Naukri uses the label click to advance the chatbot
           const lbl = document.querySelector(`label[for="${targetRadio.id}"]`);
-          if (lbl) {//      await new Promise(r => setTimeout(r, 100)); lbl.click(); }
-         //      await new Promise(r => setTimeout(r, 1800));
+          if (lbl) {
+            await new Promise(r => setTimeout(r, 100));
+            lbl.click();
+          }
+          await new Promise(r => setTimeout(r, 1800));
           fillNaukriChatbot(profile); // recurse for next question
           return;
         } else {
@@ -1610,7 +1734,6 @@
       fillNaukriChatbot(profile);
     }
   }
-}
 
   // ─── Clear All Fields ─────────────────────────────────────────────────────
   function clearAllFields() {
@@ -1633,7 +1756,11 @@
     fillDebounce = setTimeout(() => autoFill(storedProfile, true, acceptTermsEnabled), 800);
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // Only observe DOM mutations on known job platforms — avoids constant CPU overhead
+  // on high-churn sites like LinkedIn feed, news, etc.
+  if (currentPlatform.id !== "generic") {
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 
   // ─── Message Listener ─────────────────────────────────────────────────────
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1651,8 +1778,9 @@
     }
     if (message.action === "getStatus") {
       const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="file"]), textarea, select');
-      let detectedCount = 0;
-      inputs.forEach(el => { if (matchField(el)) detectedCount++; });
+      // Use a lightweight visible-field count rather than running the full matchField
+      // scan (which does DOM label lookups per element) on every status poll.
+      const detectedCount = inputs.length;
       sendResponse({ platform: currentPlatform, fieldsDetected: detectedCount, url: window.location.href, isJobSite: currentPlatform.id !== "generic" });
       return true;
     }
