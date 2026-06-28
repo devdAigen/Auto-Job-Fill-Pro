@@ -1,0 +1,129 @@
+{
+  "metadata": {
+    "exportedAt": "2026-06-28T13:33:13.012Z",
+    "source": "JobFill Pro"
+  },
+  "local": {
+    "history": [
+      {
+        "fieldCount": 8,
+        "siteName": "Workday",
+        "timestamp": 1782651106547,
+        "title": "R&D C# & DOT Net Senior Developer - IDC",
+        "url": "https://hitachi.wd1.myworkdayjobs.com/en-US/hitachi/job/Bengaluru-Karnataka-India/R-D-C----DOT-Net-Senior-Developer---IDC_R0132811/apply/autofillWithResume?source=LinkedIn"
+      }
+    ],
+    "profile": {
+      "coverLetter": {
+        "default": "I am excited to apply for this opportunity and bring over six years of experience in designing and developing scalable full-stack applications using .NET, Angular, cloud technologies, and microservices architecture. I look forward to contributing my technical expertise and problem-solving skills to your team."
+      },
+      "customAnswers": [
+        {
+          "answer": "I specialize in building robust full-stack applications with .NET Core, Angular, and Azure, focusing on maintainable architecture and automation.",
+          "question": "Describe your strongest technical skill."
+        }
+      ],
+      "customFields": [
+        {
+          "label": "Preferred Shift",
+          "value": "Day"
+        },
+        {
+          "label": "Gender",
+          "value": "Male"
+        },
+        {
+          "label": "How Did You Hear About Us?",
+          "value": "LinkedIn"
+        }
+      ],
+      "diversity": {
+        "disabilityStatus": "No, I don't have a disability",
+        "ethnicity": "South Asian",
+        "gender": "Male",
+        "veteranStatus": "I am not a protected veteran"
+      },
+      "education": {
+        "degree": "Master's",
+        "field": "Computer Applications",
+        "gpa": "8.4 CGPA",
+        "graduationYear": "2018",
+        "secondarySchool": "AIMIT",
+        "secondaryYear": "2014",
+        "university": "St Aloysius Institute of Management and Information Technology (AIMIT)"
+      },
+      "personal": {
+        "address": "Flat 7B, Sunshine Heights, Calangute",
+        "city": "Goa",
+        "country": "India",
+        "currentLocation": "Goa, India",
+        "dob": "1993-04-15",
+        "email": "devdattsawant@hotmail.com",
+        "firstName": "Devdatt",
+        "fullName": "Devdatt Sawant",
+        "gender": "Male",
+        "github": "https://github.com/devdatt",
+        "lastName": "Sawant",
+        "linkedIn": "https://linkedin.com/in/devdatt-sawant",
+        "nationality": "Indian",
+        "phone": "+91 9322449732",
+        "portfolio": "https://devdatt.dev",
+        "state": "Goa",
+        "zipCode": "403516"
+      },
+      "professional": {
+        "availableFrom": "Immediately",
+        "countryCode": "+91",
+        "currency": "INR",
+        "currentCompany": "Cross Country Infotech",
+        "currentSalary": "18 LPA",
+        "currentTitle": "Senior Software Developer",
+        "expectedSalary": "22 LPA",
+        "noticePeriod": "30 days",
+        "preferredLocation": "Remote",
+        "workMode": "Hybrid",
+        "workType": "Full-time",
+        "yearsOfExperience": "6.8"
+      },
+      "resume": {
+        "fileData": "",
+        "fileName": "Devdatt_Sawant_Resume.pdf",
+        "mimeType": "application/pdf"
+      },
+      "work": {
+        "authorized": true,
+        "sponsorship": true
+      },
+      "yesNoAnswers": [
+        {
+          "answer": "Yes",
+          "question": "Are you legally authorized to work in the country where this position is located?"
+        },
+        {
+          "answer": "No",
+          "question": "Will you now or in the future require visa sponsorship?"
+        },
+        {
+          "answer": "Yes",
+          "question": "Are you willing to relocate?"
+        },
+        {
+          "answer": "Yes",
+          "question": "Are you open to remote work?"
+        },
+        {
+          "answer": "Yes",
+          "question": "Are you open to hybrid work?"
+        },
+        {
+          "answer": "No",
+          "question": "Are you currently an employee of a  Group company?"
+        }
+      ]
+    }
+  },
+  "sync": {
+    "lastSyncedAt": "",
+    "providers": []
+  }
+}

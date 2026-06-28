@@ -34,6 +34,20 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transform: translateY(-16px);
+  opacity: 0;
+  animation: popup-slide-in 220ms ease-out forwards;
+}
+
+@keyframes popup-slide-in {
+  from {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* ─── Header ─────────────────────────────────────────── */
