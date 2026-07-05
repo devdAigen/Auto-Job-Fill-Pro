@@ -14,18 +14,23 @@
     taleo: { match: /taleo\.net/, name: "Taleo" },
     successfactors: { match: /successfactors\.com/, name: "SuccessFactors" },
     naukri: { match: /naukri\.com/, name: "Naukri" },
-    linkedin: { match: /linkedin\.com/, name: "LinkedIn" }
+    linkedin: { match: /linkedin\.com|lnkd\.in/i, name: "LinkedIn" }
   };
 
   function detectPlatform() {
     const url = window.location.href;
+    const hostname = window.location.hostname.toLowerCase();
     for (const [key, platform] of Object.entries(PLATFORMS)) {
-      if (platform.match.test(url)) return { id: key, ...platform };
+      if (platform.match.test(url) || platform.match.test(hostname)) return { id: key, ...platform };
     }
     return { id: "generic", name: "Generic" };
   }
 
   const currentPlatform = detectPlatform();
+  console.log("[JobFill] content.js loaded", currentPlatform, "hostname=", window.location.hostname);
+  if (currentPlatform.id === "linkedin") {
+    try { watchLinkedInFollowCheckbox(); } catch (e) { console.warn("[JobFill] watchLinkedInFollowCheckbox failed", e); }
+  }
 
   // ─── Field Mappings ───────────────────────────────────────────────────────
   const FIELD_MAPPINGS = {
@@ -409,8 +414,21 @@
       }
     }
 
-    // LinkedIn Easy Apply: ancestor walk for span/div labels
+    // LinkedIn Easy Apply: handle sibling labels and popup form wrappers
     if (currentPlatform.id === "linkedin") {
+      const linkedInFieldWrapper = el.closest(
+        "[data-test-single-line-text-form-component], [data-test-text-form-component], [data-test-form-component], [data-test-text-entity-list-form-select], .artdeco-text-input--container, .artdeco-text-input"
+      );
+      if (linkedInFieldWrapper) {
+        const wrapperLabel = linkedInFieldWrapper.querySelector(
+          "label[for], .artdeco-text-input--label, .fb-form-element__label, [class*='label'], span[data-test-single-line-text-form-component__title]"
+        );
+        if (wrapperLabel && !wrapperLabel.contains(el)) {
+          const t = clean(wrapperLabel);
+          if (t) return t;
+        }
+      }
+
       let ancestor = el.parentElement;
       while (ancestor) {
         if (ancestor.matches("label, legend")) return clean(ancestor);
@@ -781,6 +799,32 @@
   }
 
   // ─── Yes/No Radio Groups ──────────────────────────────────────────────────
+  function getGroupQuestionLabel(el) {
+    if (!el) return "";
+    const fieldset = el.closest("fieldset");
+    if (fieldset) {
+      const legend = fieldset.querySelector("legend");
+      if (legend) return getLabelText(legend);
+    }
+    const container = el.closest(".form-group, .form-field, .control-group, .question, .form-row, .field-group, .input-group");
+    if (container) {
+      const groupLabel = container.querySelector(
+        "label, legend, .control-label, .field-label, .question-label, [class*='label'], [data-automation-id*='Label'], [data-automation-id*='richText']"
+      );
+      if (groupLabel && !groupLabel.contains(el)) return getLabelText(groupLabel);
+    }
+    return getLabelText(el);
+  }
+
+  function getRadioOptionLabel(radioEl) {
+    if (!radioEl?.id) return getLabelText(radioEl);
+    try {
+      const label = document.querySelector(`label[for="${CSS.escape(radioEl.id)}"]`);
+      if (label) return label.innerText.replace(/\s+/g, " ").trim().toLowerCase();
+    } catch {}
+    return getLabelText(radioEl);
+  }
+
   function fillYesNoRadios(profile) {
     const groups = {};
     document.querySelectorAll('input[type="radio"]').forEach(r => {
@@ -791,16 +835,16 @@
 
     for (const group of Object.values(groups)) {
       if (group.length < 2) continue;
-      const labelText = getLabelText(group[0]);
+      const labelText = getGroupQuestionLabel(group[0]);
       const isAuthQ = /authorized|eligible|legally|work in/i.test(labelText);
       const isSponsorQ = /sponsor|sponsorship|visa/i.test(labelText);
       if (isAuthQ) {
         const want = profile.work?.authorized ? "yes" : "no";
-        group.forEach(r => { if (normalizeYesNo(r.value || getLabelText(r)) === want) r.click(); });
+        group.forEach(r => { if (normalizeYesNo(r.value || getRadioOptionLabel(r)) === want) r.click(); });
       }
       if (isSponsorQ) {
         const want = profile.work?.sponsorship ? "yes" : "no";
-        group.forEach(r => { if (normalizeYesNo(r.value || getLabelText(r)) === want) r.click(); });
+        group.forEach(r => { if (normalizeYesNo(r.value || getRadioOptionLabel(r)) === want) r.click(); });
       }
     }
   }
@@ -855,7 +899,7 @@
     return false;
   }
 
-  function fillCustomAnswers(customAnswers) {
+  async function fillCustomAnswers(customAnswers) {
     if (!customAnswers?.length) return 0;
     console.log("[JobFill] fillCustomAnswers called with", customAnswers.length, "items");
     let count = 0;
@@ -893,6 +937,34 @@
         }
       }
     });
+
+    if (currentPlatform.id === "workday" || currentPlatform.id === "linkedin") {
+      const buttonCandidates = Array.from(document.querySelectorAll('button[aria-haspopup="listbox"], button[role="combobox"], [role="combobox"]'));
+      for (const btn of buttonCandidates) {
+        if (isButtonDropdownFilled(btn)) continue;
+        const label = getLabelText(btn);
+        const ph = (btn.getAttribute("aria-label") || "").toLowerCase();
+        const combined = (label + " " + ph).trim();
+        if (!combined) continue;
+
+        let bestMatch = null, bestScore = 0, bestIndex = -1;
+        customAnswers.forEach((qa, idx) => {
+          if (!qa.question || !qa.answer || qa.answer === "Skip") return;
+          const score = fuzzyMatchScore(combined, qa.question);
+          if (score > bestScore && score >= 0.3) { bestScore = score; bestMatch = qa; bestIndex = idx; }
+        });
+
+        if (bestMatch) {
+          console.log("[JobFill] Custom answer dropdown match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
+          const filled = await fillDropdownButtonByAnswer(btn, bestMatch.answer);
+          if (filled) {
+            count++;
+            customAnswers.splice(bestIndex, 1);
+          }
+        }
+      }
+    }
+
     return count;
   }
 
@@ -956,6 +1028,14 @@
     return false;
   }
 
+  async function fillDropdownButtonByAnswer(buttonEl, desiredAnswer) {
+    if (!buttonEl || !desiredAnswer) return false;
+    if (currentPlatform.id === "workday") {
+      return fillWorkdayButtonDropdown(buttonEl, desiredAnswer);
+    }
+    return fillButtonDropdown(buttonEl, desiredAnswer);
+  }
+
   // ─── Yes/No Answers (Context-Aware) ───────────────────────────────────────
   async function fillYesNoAnswers(yesNoAnswers) {
     if (!yesNoAnswers?.length) return 0;
@@ -1003,7 +1083,7 @@
         });
         if (bestMatch) {
           console.log("[JobFill] Yes/No dropdown match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
-          const filled = await fillButtonDropdown(btn, bestMatch.answer);
+          const filled = await fillDropdownButtonByAnswer(btn, bestMatch.answer);
           if (filled) {
             count++;
             yesNoAnswers.splice(bestIndex, 1); // Remove used answer
@@ -1036,7 +1116,7 @@
         console.log("[JobFill] Yes/No radio match:", bestMatch.question, "->", bestMatch.answer, "score:", bestScore);
         const desired = normalizeYesNo(bestMatch.answer);
         group.forEach(r => {
-          const rv = normalizeYesNo(r.value || getLabelText(r));
+          const rv = normalizeYesNo(r.value || getRadioOptionLabel(r));
           if (rv === desired) { r.click(); count++; }
         });
         yesNoAnswers.splice(bestIndex, 1); // Remove used answer
@@ -1045,8 +1125,38 @@
     return count;
   }
 
+  function uncheckLinkedInFollowCheckbox() {
+    const cb = document.getElementById("follow-company-checkbox");
+    if (!cb) return false;
+    if (!cb.checked) return true;
+
+    const lbl = document.querySelector('label[for="follow-company-checkbox"]');
+    try { cb.click(); } catch {}
+    if (cb.checked && lbl) {
+      try { lbl.click(); } catch {}
+    }
+    if (cb.checked) {
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+      cb.dispatchEvent(new Event("input", { bubbles: true }));
+      cb.dispatchEvent(new Event("click", { bubbles: true }));
+    }
+    console.log("[JobFill] uncheckLinkedInFollowCheckbox ->", cb.checked ? "failed" : "success");
+    return !cb.checked;
+  }
+
+  function watchLinkedInFollowCheckbox() {
+    if (currentPlatform.id !== "linkedin") return;
+    const observer = new MutationObserver(() => {
+      uncheckLinkedInFollowCheckbox();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => uncheckLinkedInFollowCheckbox(), 500);
+  }
+
   // ─── Smart Checkbox Handler ───────────────────────────────────────────────
   function autoAcceptTerms() {
+    if (currentPlatform.id === "linkedin") uncheckLinkedInFollowCheckbox();
     document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       const label = getLabelText(cb);
       if (!label) return;
@@ -1082,8 +1192,9 @@
         /opt.?in to promo/i,
         /connect on linkedin/i
       ];
-      const isOptOut = OPT_OUT_PATTERNS.some(r => r.test(label));
-      console.log("[JobFill] isOptOut:", isOptOut, "|", label.slice(0, 50));
+      const linkedInFollowCheckbox = cb.id === "follow-company-checkbox";
+      const isOptOut = linkedInFollowCheckbox || OPT_OUT_PATTERNS.some(r => r.test(label));
+      console.log("[JobFill] isOptOut:", isOptOut, "|", label.slice(0, 50), "| id=", cb.id);
 
       if (isOptOut) {
         if (cb.checked) {
@@ -1541,7 +1652,7 @@
     const ynCount = await fillYesNoAnswers([...profile.yesNoAnswers || []]);
     results.filled += ynCount;
 
-    const customCount = fillCustomAnswers([...profile.customAnswers || []]);
+    const customCount = await fillCustomAnswers([...profile.customAnswers || []]);
     results.filled += customCount;
 
     const cfCount = fillCustomFields([...profile.customFields || []]);
