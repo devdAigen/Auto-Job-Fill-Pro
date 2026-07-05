@@ -1,10 +1,17 @@
 {
   "metadata": {
-    "exportedAt": "2026-06-28T13:33:13.012Z",
+    "exportedAt": "2026-07-05T13:19:32.802Z",
     "source": "JobFill Pro"
   },
   "local": {
     "history": [
+      {
+        "fieldCount": 7,
+        "siteName": "Job Site",
+        "timestamp": 1782910062846,
+        "title": "Submit application for Engineer III, Software",
+        "url": "https://apply.omnicell.com/careers/apply?pid=1133912276024&domain=omnicell.com&hl=en"
+      },
       {
         "fieldCount": 8,
         "siteName": "Workday",
@@ -35,6 +42,10 @@
         {
           "label": "How Did You Hear About Us?",
           "value": "LinkedIn"
+        },
+        {
+          "label": "Phone Device Type",
+          "value": "Mobile"
         }
       ],
       "diversity": {
@@ -44,7 +55,7 @@
         "veteranStatus": "I am not a protected veteran"
       },
       "education": {
-        "degree": "Master",
+        "degree": "Master degree",
         "field": "Computer Applications",
         "gpa": "8.4 CGPA",
         "graduationYear": "2018",
@@ -64,10 +75,10 @@
         "gender": "Male",
         "github": "https://github.com/devdatt",
         "lastName": "Sawant",
-        "linkedIn": "https://linkedin.com/in/devdatt-sawant",
+        "linkedIn": "https://www.linkedin.com/in/devdatt-sawant-427304186/",
         "nationality": "Indian",
         "phone": "+91 9322449732",
-        "portfolio": "https://devdatt.dev",
+        "portfolio": "https://nervous-blush-h8p5ixxz.edgeone.dev/",
         "state": "Goa",
         "zipCode": "403516"
       },
@@ -118,8 +129,17 @@
         {
           "answer": "No",
           "question": "Are you currently an employee of a  Group company?"
+        },
+        {
+          "answer": "No",
+          "question": "Are you a prior employee of a  company"
         }
       ]
+    },
+    "settings": {
+      "autoAcceptTerms": true,
+      "autoFillOnLoad": true,
+      "skipFilled": true
     }
   },
   "sync": {
