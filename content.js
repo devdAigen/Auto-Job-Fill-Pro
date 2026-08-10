@@ -1993,7 +1993,8 @@
     getGroupQuestionLabel,
     getRadioOptionLabel,
     getWorkdayButtonLabel,
-    currentPlatform
+    currentPlatform,
+    triggerAutoFill: (profile, skipFilled, acceptTerms) => autoFill(profile, skipFilled, acceptTerms)
   };
 
 })();

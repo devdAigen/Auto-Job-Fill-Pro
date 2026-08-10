@@ -988,7 +988,12 @@ function refreshRecorderStatus() {
       if (chrome.runtime.lastError) return; // content script not injected on this page (e.g. chrome:// tab)
       setRecorderUI(!!(response && response.recording));
     });
+    chrome.tabs.sendMessage(tab.id, { action: "getFlowStatus" }, response => {
+      if (chrome.runtime.lastError) return;
+      setFlowRunningUI(!!(response && response.running));
+    });
   });
+  loadSavedFlows(flows => renderFlowSelect(flows));
 }
 
 function renderRecorderResults(fields) {
@@ -1078,8 +1083,9 @@ document.getElementById("recStopBtn")?.addEventListener("click", async () => {
   chrome.tabs.sendMessage(tab.id, { action: "stopRecording" }, response => {
     setRecorderUI(false);
     recorderFields = (response && response.fields) || [];
+    lastRecordedFlowSteps = (response && response.flowSteps) || [];
     renderRecorderResults(recorderFields);
-    showRecStatus(`Captured ${recorderFields.length} field${recorderFields.length === 1 ? "" : "s"}. Review and save below.`);
+    showRecStatus(`Captured ${recorderFields.length} field${recorderFields.length === 1 ? "" : "s"} and ${lastRecordedFlowSteps.length} flow step${lastRecordedFlowSteps.length === 1 ? "" : "s"}. Review below, or name and save the flow.`);
   });
 });
 
@@ -1132,4 +1138,124 @@ document.getElementById("recSaveBtn")?.addEventListener("click", () => {
       recorderFields = [];
     });
   });
+});
+
+// ─── Full Automation Flow ────────────────────────────────────────────────────
+// Saves the ordered click/fill-checkpoint sequence recorder.js captured, then
+// replays it via player.js against a fresh application. Values are re-fetched
+// from the profile at run time (see player.js) — only the sequence of clicks
+// is what gets replayed literally.
+
+let lastRecordedFlowSteps = [];
+
+function loadSavedFlows(callback) {
+  chrome.storage.local.get(["workdayFlows"], r => callback(r.workdayFlows || []));
+}
+
+function renderFlowSelect(flows, selectedName) {
+  const select = document.getElementById("flowSelect");
+  if (!select) return;
+  select.innerHTML = flows.length
+    ? flows.map(f => `<option value="${escHtml(f.name)}">${escHtml(f.name)} (${f.steps.length} steps)</option>`).join("")
+    : `<option value="">— none saved —</option>`;
+  if (selectedName) select.value = selectedName;
+  const hasFlows = flows.length > 0;
+  document.getElementById("flowDeleteBtn").style.display = hasFlows ? "block" : "none";
+}
+
+function appendFlowLog(line) {
+  const el = document.getElementById("flowLog");
+  if (!el) return;
+  const row = document.createElement("div");
+  row.textContent = line;
+  el.appendChild(row);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setFlowRunningUI(isRunning) {
+  document.getElementById("flowRunBtn").style.display = isRunning ? "none" : "block";
+  document.getElementById("flowStopBtn").style.display = isRunning ? "block" : "none";
+  if (!isRunning) document.getElementById("flowResumeBtn").style.display = "none";
+}
+
+// Auto-flag the last click step whose button text looks like a final submit —
+// the actual pause is applied at run time based on the checkbox, so this only
+// decides *which* step is a candidate.
+function findLikelySubmitStepIndex(steps) {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.type === "click" && s.target && /submit|finish application|complete application|apply now/i.test(s.target.text || "")) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+document.getElementById("flowSaveBtn")?.addEventListener("click", () => {
+  const name = (document.getElementById("flowNameInput").value || "").trim();
+  if (!name) { showRecStatus("Give the flow a name first."); return; }
+  if (!lastRecordedFlowSteps.length) { showRecStatus("Nothing to save — record a flow first, then Stop & Review."); return; }
+  loadSavedFlows(flows => {
+    const filtered = flows.filter(f => f.name !== name);
+    filtered.push({ name, steps: lastRecordedFlowSteps, savedAt: Date.now() });
+    chrome.storage.local.set({ workdayFlows: filtered }, () => {
+      renderFlowSelect(filtered, name);
+      showRecStatus(`Saved flow "${name}" (${lastRecordedFlowSteps.length} steps).`);
+    });
+  });
+});
+
+document.getElementById("flowDeleteBtn")?.addEventListener("click", () => {
+  const name = document.getElementById("flowSelect").value;
+  if (!name) return;
+  if (!confirm(`Delete saved flow "${name}"?`)) return;
+  loadSavedFlows(flows => {
+    const filtered = flows.filter(f => f.name !== name);
+    chrome.storage.local.set({ workdayFlows: filtered }, () => renderFlowSelect(filtered));
+  });
+});
+
+document.getElementById("flowRunBtn")?.addEventListener("click", async () => {
+  const name = document.getElementById("flowSelect").value;
+  if (!name) { appendFlowLog("Pick a saved flow first."); return; }
+  const tab = await getActiveTab();
+  if (!tab) return;
+
+  loadSavedFlows(flows => {
+    const flow = flows.find(f => f.name === name);
+    if (!flow) return;
+    const steps = flow.steps.map(s => ({ ...s }));
+    if (document.getElementById("flowPauseSubmit").checked) {
+      const idx = findLikelySubmitStepIndex(steps);
+      if (idx >= 0) steps[idx].pauseBeforeSubmit = true;
+    }
+    document.getElementById("flowLog").innerHTML = "";
+    setFlowRunningUI(true);
+    chrome.tabs.sendMessage(tab.id, { action: "runFlow", steps }, response => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        appendFlowLog("Couldn't start: " + ((response && response.error) || "reload the page and try again."));
+        setFlowRunningUI(false);
+      }
+    });
+  });
+});
+
+document.getElementById("flowStopBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (tab) chrome.tabs.sendMessage(tab.id, { action: "stopFlow" }, () => {});
+  setFlowRunningUI(false);
+});
+
+document.getElementById("flowResumeBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (tab) chrome.tabs.sendMessage(tab.id, { action: "confirmStep" }, () => {});
+  document.getElementById("flowResumeBtn").style.display = "none";
+});
+
+// player.js (running as a content script) posts progress here while the popup is open.
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action !== "flowLog") return;
+  appendFlowLog(message.message);
+  if (message.flowPaused) document.getElementById("flowResumeBtn").style.display = "block";
+  if (message.flowDone || message.flowError) setFlowRunningUI(false);
 });
