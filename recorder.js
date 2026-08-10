@@ -18,7 +18,15 @@
 
   let recording = false;
   let attachedListeners = false;
-  const capturedMap = new Map(); // key -> record
+  const capturedMap = new Map(); // key -> record, for the field-review ("Learn") tab
+
+  // Ordered action log, for the "Full Automation Flow" replay feature.
+  // Distinct from capturedMap: capturedMap is deduped-by-label for reviewing
+  // field values; flowSteps is the literal ordered sequence of clicks and
+  // fill-checkpoints needed to replay the whole multi-page application.
+  let flowSteps = [];
+  let lastEventTime = Date.now();
+  let fieldsChangedSinceLastClick = false;
 
   function core() {
     return window.__jobFillCore || {};
@@ -66,6 +74,49 @@
       capturedAt: Date.now()
     });
     persistBuffer();
+    // A field changed — the next click step in the flow needs an autofill
+    // checkpoint inserted before it so replay fills this page from the
+    // profile (not by literally retyping the value captured here).
+    fieldsChangedSinceLastClick = true;
+  }
+
+  // ─── Flow step log (for full-automation replay) ────────────────────────
+  function pushFlowStep(step) {
+    const now = Date.now();
+    step.elapsedMs = now - lastEventTime;
+    step.timestamp = now;
+    lastEventTime = now;
+    flowSteps.push(step);
+    try { chrome.storage.local.set({ recordingFlowBuffer: flowSteps }); } catch {}
+  }
+
+  function describeClickTarget(el) {
+    return {
+      automationId: (el.getAttribute && el.getAttribute("data-automation-id")) || "",
+      ariaLabel: cleanText(el.getAttribute && el.getAttribute("aria-label")),
+      text: cleanText(el.textContent).slice(0, 80),
+      tag: el.tagName.toLowerCase(),
+      role: (el.getAttribute && el.getAttribute("role")) || ""
+    };
+  }
+
+  function looksLikeFileUploadTrigger(el) {
+    if (el.tagName.toLowerCase() === "input" && (el.type || "").toLowerCase() === "file") return true;
+    const container = el.closest("form, section, [data-automation-id]") || el.parentElement;
+    if (container && container.querySelector('input[type="file"]')) return true;
+    return /upload resume|upload.*file|attach resume|browse|choose file|select file/i.test(cleanText(el.textContent));
+  }
+
+  function isDropdownTrigger(el) {
+    // Workday listbox-style dropdown buttons — their eventual option pick is
+    // already captured as a field value via handleOptionClick, so recording
+    // the trigger click too would just add a noisy, redundant flow step.
+    return el.getAttribute("aria-haspopup") === "listbox" || el.hasAttribute("aria-expanded");
+  }
+
+  function isToggleWidget(el) {
+    const role = el.getAttribute("role") || "";
+    return role === "checkbox" || role === "radio" || role === "switch";
   }
 
   // ─── Field-type handlers ────────────────────────────────────────────────
@@ -169,11 +220,38 @@
     if (optionEl) handleOptionClick(optionEl);
   }
 
+  // Records the navigation/action sequence itself — which button was pressed,
+  // in what order — separately from field values, so the flow can be replayed
+  // end to end. Dropdown triggers, radios/checkboxes handled elsewhere are
+  // excluded here so they aren't double-recorded as generic clicks.
+  function onActionClick(e) {
+    if (!recording) return;
+    const el = e.target.closest && e.target.closest(
+      'button, a[role="button"], [role="button"], input[type="submit"], input[type="button"], input[type="file"]'
+    );
+    if (!el) return;
+    if (el.closest('[role="option"]')) return;
+    if (isDropdownTrigger(el)) return;
+    if (isToggleWidget(el)) return;
+
+    if (fieldsChangedSinceLastClick) {
+      pushFlowStep({ type: "autofill-checkpoint" });
+      fieldsChangedSinceLastClick = false;
+    }
+
+    pushFlowStep({
+      type: looksLikeFileUploadTrigger(el) ? "file-upload" : "click",
+      target: describeClickTarget(el),
+      url: location.href
+    });
+  }
+
   function attachListeners() {
     if (attachedListeners) return;
     document.addEventListener("change", onChange, true);
     document.addEventListener("blur", onBlur, true);
     document.addEventListener("click", onClick, true);
+    document.addEventListener("click", onActionClick, true);
     attachedListeners = true;
   }
 
@@ -181,6 +259,7 @@
     document.removeEventListener("change", onChange, true);
     document.removeEventListener("blur", onBlur, true);
     document.removeEventListener("click", onClick, true);
+    document.removeEventListener("click", onActionClick, true);
     attachedListeners = false;
   }
 
@@ -189,28 +268,38 @@
     if (message.action === "startRecording") {
       recording = true;
       capturedMap.clear();
+      flowSteps = [];
+      fieldsChangedSinceLastClick = false;
+      lastEventTime = Date.now();
       attachListeners();
-      chrome.storage.local.set({ recordingBuffer: [], recordingActive: true });
+      chrome.storage.local.set({ recordingBuffer: [], recordingFlowBuffer: [], recordingActive: true });
       sendResponse({ success: true });
       return true;
     }
     if (message.action === "stopRecording") {
       recording = false;
       detachListeners();
+      // Flush a trailing autofill checkpoint if the recording ended mid-fill
+      // (e.g. the last page had no further button click before Stop).
+      if (fieldsChangedSinceLastClick) {
+        pushFlowStep({ type: "autofill-checkpoint" });
+        fieldsChangedSinceLastClick = false;
+      }
       chrome.storage.local.set({ recordingActive: false });
-      sendResponse({ success: true, fields: Array.from(capturedMap.values()) });
+      sendResponse({ success: true, fields: Array.from(capturedMap.values()), flowSteps: flowSteps.slice() });
       return true;
     }
     if (message.action === "discardRecording") {
       recording = false;
       detachListeners();
       capturedMap.clear();
-      chrome.storage.local.set({ recordingBuffer: [], recordingActive: false });
+      flowSteps = [];
+      chrome.storage.local.set({ recordingBuffer: [], recordingFlowBuffer: [], recordingActive: false });
       sendResponse({ success: true });
       return true;
     }
     if (message.action === "getRecordingStatus") {
-      sendResponse({ recording, count: capturedMap.size });
+      sendResponse({ recording, count: capturedMap.size, stepCount: flowSteps.length });
       return true;
     }
   });
