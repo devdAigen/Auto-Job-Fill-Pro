@@ -327,6 +327,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); cur
 .qa-item input[type="text"], .qa-item textarea { margin-top: 0; }
 
 /* ─── Yes/No Item ─────────────────────────────────────── */
+.rec-meta { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
 .yn-item { padding-right: 40px; }
 
 .yn-row {
