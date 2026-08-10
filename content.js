@@ -1983,4 +1983,17 @@
   // Notify background
   try { chrome.runtime.sendMessage({ action: "pageLoaded", platform: currentPlatform, url: window.location.href }); } catch {}
 
+  // ─── Bridge for recorder.js (Learn Mode) ───────────────────────────────────
+  // recorder.js is a separate content script loaded after this one (same isolated
+  // world), so it can't reach these closured functions directly. Expose the label-
+  // detection helpers it needs — these already encode all the Workday-specific
+  // fieldset/legend/aria quirks, so recorder.js doesn't have to reimplement them.
+  window.__jobFillCore = {
+    getLabelText,
+    getGroupQuestionLabel,
+    getRadioOptionLabel,
+    getWorkdayButtonLabel,
+    currentPlatform
+  };
+
 })();

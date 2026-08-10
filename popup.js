@@ -24,6 +24,7 @@ tabBtns.forEach(btn => {
         renderYNList(p.yesNoAnswers || []);
       });
     }
+    if (tab === "recorder") refreshRecorderStatus();
   });
 });
 
@@ -916,5 +917,219 @@ document.getElementById("saveCredsBtn").addEventListener("click", () => {
     status.textContent = "✓ Credentials saved!";
     status.style.display = "block";
     setTimeout(() => { status.style.display = "none"; }, 2500);
+  });
+});
+
+// ─── Recorder / Learn Mode ──────────────────────────────────────────────────
+// Records a manual pass through a form (id, type, label, value per field) and
+// lets the user save the reviewed entries into the same stores the Fill engine
+// already reads from — customAnswers / customFields / yesNoAnswers, or a
+// standard profile field when the label is confidently recognized.
+
+let recorderFields = [];
+
+const STANDARD_FIELD_GUESSES = [
+  { path: "personal.firstName", test: /\bfirst name\b|\bgiven name\b/ },
+  { path: "personal.lastName", test: /\blast name\b|\bfamily name\b|\bsurname\b/ },
+  { path: "personal.email", test: /e-?mail/ },
+  { path: "personal.phone", test: /\bphone\b|\bmobile\b|\btelephone\b|contact number/ },
+  { path: "personal.linkedIn", test: /linkedin/ },
+  { path: "personal.github", test: /github/ },
+  { path: "personal.portfolio", test: /portfolio|personal website|\bwebsite\b/ },
+  { path: "personal.address", test: /\baddress\b|\bstreet\b/ },
+  { path: "personal.city", test: /\bcity\b|\btown\b/ },
+  { path: "personal.state", test: /\bstate\b|\bprovince\b|\bregion\b/ },
+  { path: "personal.country", test: /\bcountry\b/ },
+  { path: "personal.zipCode", test: /\bzip\b|postal code|\bpostcode\b/ },
+  { path: "professional.currentTitle", test: /current title|job title|current position|\bdesignation\b/ },
+  { path: "professional.currentCompany", test: /current company|current employer/ },
+  { path: "professional.yearsOfExperience", test: /years of experience|total experience/ },
+  { path: "professional.noticePeriod", test: /notice period/ },
+  { path: "professional.expectedSalary", test: /expected salary|expected ctc|salary expectation/ },
+  { path: "professional.currentSalary", test: /current salary|current ctc/ }
+];
+
+function guessStandardField(label) {
+  const l = (label || "").toLowerCase();
+  for (const g of STANDARD_FIELD_GUESSES) if (g.test.test(l)) return g.path;
+  return "";
+}
+
+function setPathValue(obj, path, value) {
+  const parts = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur[parts[i]] = cur[parts[i]] || {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function setRecorderUI(recording) {
+  document.getElementById("recStartBtn").style.display = recording ? "none" : "block";
+  document.getElementById("recStopBtn").style.display = recording ? "block" : "none";
+  document.getElementById("recIndicator").style.display = recording ? "flex" : "none";
+}
+
+function showRecStatus(msg) {
+  const el = document.getElementById("recStatusMsg");
+  if (el) el.textContent = msg;
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+function refreshRecorderStatus() {
+  getActiveTab().then(tab => {
+    if (!tab) return;
+    chrome.tabs.sendMessage(tab.id, { action: "getRecordingStatus" }, response => {
+      if (chrome.runtime.lastError) return; // content script not injected on this page (e.g. chrome:// tab)
+      setRecorderUI(!!(response && response.recording));
+    });
+  });
+}
+
+function renderRecorderResults(fields) {
+  const container = document.getElementById("recResults");
+  const saveBtn = document.getElementById("recSaveBtn");
+  if (!fields.length) {
+    container.innerHTML = `<div class="empty-list-msg">No fields captured. Fill a few fields on the page, then Stop &amp; Review.</div>`;
+    saveBtn.style.display = "none";
+    document.getElementById("recBulkRow").style.display = "none";
+    return;
+  }
+  container.innerHTML = "";
+  fields.forEach(f => {
+    const guess = guessStandardField(f.label);
+    const defaultTarget = guess ? "standard" : (/^(yes|no)$/i.test((f.value || "").trim()) ? "yesno" : "custom");
+    const item = document.createElement("div");
+    item.className = "qa-item rec-item";
+    item.dataset.guess = guess;
+    item.innerHTML = `
+      <button class="qa-delete" title="Discard this field">✕</button>
+      <label style="position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:0;">
+        <input type="checkbox" class="rec-include" checked title="Include in save">
+      </label>
+      <div class="rec-meta" style="padding-left:20px;">${escHtml(f.type || "")}${f.elementId ? " · id: " + escHtml(f.elementId) : ""}</div>
+      <div style="margin-top:4px;"><label>Question / Label</label>
+        <input type="text" class="rec-label" value="${escHtml(f.label || "")}"></div>
+      <div style="margin-top:6px;"><label>Captured Value</label>
+        <input type="text" class="rec-value" value="${escHtml(f.value || "")}"></div>
+      <div style="margin-top:6px;"><label>Save As</label>
+        <select class="rec-target">
+          <option value="">Ignore</option>
+          <option value="standard" ${guess ? "selected" : ""}>Standard profile field${guess ? " (" + escHtml(guess.split(".")[1]) + ")" : ""}</option>
+          <option value="custom" ${defaultTarget === "custom" ? "selected" : ""}>Custom Q&amp;A (text answer)</option>
+          <option value="yesno" ${defaultTarget === "yesno" ? "selected" : ""}>Yes / No Answer</option>
+          <option value="field">Custom Field (exact label match)</option>
+        </select>
+      </div>
+    `;
+    container.appendChild(item);
+    item.querySelector(".qa-delete").addEventListener("click", () => item.remove());
+  });
+  saveBtn.style.display = "block";
+  document.getElementById("recBulkRow").style.display = "flex";
+}
+
+document.getElementById("recAcceptAllBtn")?.addEventListener("click", () => {
+  document.querySelectorAll("#recResults .rec-item").forEach(item => {
+    if (item.dataset.guess) item.querySelector(".rec-target").value = "standard";
+  });
+});
+
+document.getElementById("recToggleAllBtn")?.addEventListener("click", () => {
+  const boxes = document.querySelectorAll("#recResults .rec-include");
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+});
+
+// Keyboard shortcuts while reviewing captured fields (Ctrl/Cmd+Enter = save, Esc = discard)
+document.getElementById("tab-recorder")?.addEventListener("keydown", e => {
+  const saveBtn = document.getElementById("recSaveBtn");
+  const discardBtn = document.getElementById("recDiscardBtn");
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && saveBtn && saveBtn.style.display !== "none") {
+    e.preventDefault();
+    saveBtn.click();
+  } else if (e.key === "Escape" && discardBtn) {
+    e.preventDefault();
+    discardBtn.click();
+  }
+});
+
+document.getElementById("recStartBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { action: "startRecording" }, () => {
+    if (chrome.runtime.lastError) { showRecStatus("Couldn't start recording on this page — try reloading it first."); return; }
+    setRecorderUI(true);
+    recorderFields = [];
+    document.getElementById("recResults").innerHTML = `<div class="empty-list-msg">Nothing recorded yet.</div>`;
+    document.getElementById("recSaveBtn").style.display = "none";
+    showRecStatus("Recording — switch to the page, fill it out, then come back here.");
+  });
+});
+
+document.getElementById("recStopBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { action: "stopRecording" }, response => {
+    setRecorderUI(false);
+    recorderFields = (response && response.fields) || [];
+    renderRecorderResults(recorderFields);
+    showRecStatus(`Captured ${recorderFields.length} field${recorderFields.length === 1 ? "" : "s"}. Review and save below.`);
+  });
+});
+
+document.getElementById("recDiscardBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (tab) chrome.tabs.sendMessage(tab.id, { action: "discardRecording" }, () => {});
+  setRecorderUI(false);
+  recorderFields = [];
+  document.getElementById("recResults").innerHTML = `<div class="empty-list-msg">Nothing recorded yet.</div>`;
+  document.getElementById("recSaveBtn").style.display = "none";
+  document.getElementById("recBulkRow").style.display = "none";
+  showRecStatus("Discarded.");
+});
+
+document.getElementById("recSaveBtn")?.addEventListener("click", () => {
+  chrome.storage.local.get(["profile"], result => {
+    const profile = result.profile || getDefaultProfile();
+    profile.customAnswers = profile.customAnswers || [];
+    profile.customFields = profile.customFields || [];
+    profile.yesNoAnswers = profile.yesNoAnswers || [];
+
+    let savedCount = 0;
+    document.querySelectorAll("#recResults .rec-item").forEach(item => {
+      const included = item.querySelector(".rec-include")?.checked !== false;
+      if (!included) return;
+      const label = (item.querySelector(".rec-label")?.value || "").trim();
+      const value = (item.querySelector(".rec-value")?.value || "").trim();
+      const target = item.querySelector(".rec-target")?.value || "";
+      if (!label || !value || !target) return;
+
+      if (target === "standard") {
+        const guess = item.dataset.guess || guessStandardField(label);
+        if (guess) { setPathValue(profile, guess, value); savedCount++; }
+        else { profile.customFields.push({ label, value }); savedCount++; }
+        return;
+      }
+      if (target === "custom") { profile.customAnswers.push({ question: label, answer: value }); savedCount++; return; }
+      if (target === "field") { profile.customFields.push({ label, value }); savedCount++; return; }
+      if (target === "yesno") {
+        const answer = /^y/i.test(value) ? "Yes" : /^n/i.test(value) ? "No" : "Skip";
+        profile.yesNoAnswers.push({ question: label, answer }); savedCount++;
+      }
+    });
+
+    chrome.storage.local.set({ profile }, () => {
+      showRecStatus(`Saved ${savedCount} field${savedCount === 1 ? "" : "s"} to your profile. They'll be used next time you hit Fill.`);
+      document.getElementById("recResults").innerHTML = `<div class="empty-list-msg">Nothing recorded yet.</div>`;
+      document.getElementById("recSaveBtn").style.display = "none";
+      document.getElementById("recBulkRow").style.display = "none";
+      recorderFields = [];
+    });
   });
 });

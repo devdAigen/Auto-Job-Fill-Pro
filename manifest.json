@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobFill Pro",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Auto-fill job applications on Workday, Greenhouse, Lever and more. Stop repeating yourself.",
   "permissions": [
     "storage",
@@ -37,7 +37,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["content.js", "recorder.js"],
       "run_at": "document_idle"
     }
   ],
