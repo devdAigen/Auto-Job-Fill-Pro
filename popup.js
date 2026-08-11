@@ -24,7 +24,10 @@ tabBtns.forEach(btn => {
         renderYNList(p.yesNoAnswers || []);
       });
     }
-    if (tab === "recorder") refreshRecorderStatus();
+    if (tab === "recorder") {
+      refreshRecorderStatus();
+      if (document.getElementById("recFlowPanel").style.display !== "none") refreshFlowPanel();
+    }
   });
 });
 
@@ -804,11 +807,15 @@ function loadHistory() {
     }
     container.innerHTML = history.slice(0, 30).map(h => {
       const dateStr = new Date(h.timestamp).toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      const icon = h.submitted ? "🚀" : "💼";
+      const badge = h.submitted
+        ? `<span class="flow-step-badge type-submit">Submitted</span>`
+        : "";
       return `<div class="history-item">
-        <div class="history-icon">💼</div>
+        <div class="history-icon">${icon}</div>
         <div class="history-info">
-          <div class="history-site">${escHtml(h.siteName || "Unknown")}</div>
-          <div class="history-meta">${dateStr} · ${escHtml((h.url || "").replace(/https?:\/\//, "").slice(0, 40))}</div>
+          <div class="history-site">${escHtml(h.siteName || "Unknown")} ${badge}</div>
+          <div class="history-meta">${dateStr}${h.flowName ? " · via " + escHtml(h.flowName) : ""} · ${escHtml((h.url || "").replace(/https?:\/\//, "").slice(0, 40))}</div>
         </div>
         <div class="history-count">+${h.fieldCount || 0}</div>
       </div>`;
@@ -988,12 +995,7 @@ function refreshRecorderStatus() {
       if (chrome.runtime.lastError) return; // content script not injected on this page (e.g. chrome:// tab)
       setRecorderUI(!!(response && response.recording));
     });
-    chrome.tabs.sendMessage(tab.id, { action: "getFlowStatus" }, response => {
-      if (chrome.runtime.lastError) return;
-      setFlowRunningUI(!!(response && response.running));
-    });
   });
-  loadSavedFlows(flows => renderFlowSelect(flows));
 }
 
 function renderRecorderResults(fields) {
@@ -1083,9 +1085,8 @@ document.getElementById("recStopBtn")?.addEventListener("click", async () => {
   chrome.tabs.sendMessage(tab.id, { action: "stopRecording" }, response => {
     setRecorderUI(false);
     recorderFields = (response && response.fields) || [];
-    lastRecordedFlowSteps = (response && response.flowSteps) || [];
     renderRecorderResults(recorderFields);
-    showRecStatus(`Captured ${recorderFields.length} field${recorderFields.length === 1 ? "" : "s"} and ${lastRecordedFlowSteps.length} flow step${lastRecordedFlowSteps.length === 1 ? "" : "s"}. Review below, or name and save the flow.`);
+    showRecStatus(`Captured ${recorderFields.length} field${recorderFields.length === 1 ? "" : "s"}. Review and save below.`);
   });
 });
 
@@ -1140,122 +1141,217 @@ document.getElementById("recSaveBtn")?.addEventListener("click", () => {
   });
 });
 
-// ─── Full Automation Flow ────────────────────────────────────────────────────
-// Saves the ordered click/fill-checkpoint sequence recorder.js captured, then
-// replays it via player.js against a fresh application. Values are re-fetched
-// from the profile at run time (see player.js) — only the sequence of clicks
-// is what gets replayed literally.
-
-let lastRecordedFlowSteps = [];
-
-function loadSavedFlows(callback) {
-  chrome.storage.local.get(["workdayFlows"], r => callback(r.workdayFlows || []));
-}
-
-function renderFlowSelect(flows, selectedName) {
-  const select = document.getElementById("flowSelect");
-  if (!select) return;
-  select.innerHTML = flows.length
-    ? flows.map(f => `<option value="${escHtml(f.name)}">${escHtml(f.name)} (${f.steps.length} steps)</option>`).join("")
-    : `<option value="">— none saved —</option>`;
-  if (selectedName) select.value = selectedName;
-  const hasFlows = flows.length > 0;
-  document.getElementById("flowDeleteBtn").style.display = hasFlows ? "block" : "none";
-}
-
-function appendFlowLog(line) {
-  const el = document.getElementById("flowLog");
-  if (!el) return;
-  const row = document.createElement("div");
-  row.textContent = line;
-  el.appendChild(row);
-  el.scrollTop = el.scrollHeight;
-}
-
-function setFlowRunningUI(isRunning) {
-  document.getElementById("flowRunBtn").style.display = isRunning ? "none" : "block";
-  document.getElementById("flowStopBtn").style.display = isRunning ? "block" : "none";
-  if (!isRunning) document.getElementById("flowResumeBtn").style.display = "none";
-}
-
-// Auto-flag the last click step whose button text looks like a final submit —
-// the actual pause is applied at run time based on the checkbox, so this only
-// decides *which* step is a candidate.
-function findLikelySubmitStepIndex(steps) {
-  for (let i = steps.length - 1; i >= 0; i--) {
-    const s = steps[i];
-    if (s.type === "click" && s.target && /submit|finish application|complete application|apply now/i.test(s.target.text || "")) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-document.getElementById("flowSaveBtn")?.addEventListener("click", () => {
-  const name = (document.getElementById("flowNameInput").value || "").trim();
-  if (!name) { showRecStatus("Give the flow a name first."); return; }
-  if (!lastRecordedFlowSteps.length) { showRecStatus("Nothing to save — record a flow first, then Stop & Review."); return; }
-  loadSavedFlows(flows => {
-    const filtered = flows.filter(f => f.name !== name);
-    filtered.push({ name, steps: lastRecordedFlowSteps, savedAt: Date.now() });
-    chrome.storage.local.set({ workdayFlows: filtered }, () => {
-      renderFlowSelect(filtered, name);
-      showRecStatus(`Saved flow "${name}" (${lastRecordedFlowSteps.length} steps).`);
-    });
+// ─── Recorder sub-mode toggle (Field Answers vs Full Flow) ─────────────────
+document.querySelectorAll(".rec-submode-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".rec-submode-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    const mode = btn.dataset.mode;
+    document.getElementById("recFieldsPanel").style.display = mode === "fields" ? "block" : "none";
+    document.getElementById("recFlowPanel").style.display = mode === "flow" ? "block" : "none";
+    if (mode === "flow") refreshFlowPanel();
   });
 });
 
-document.getElementById("flowDeleteBtn")?.addEventListener("click", () => {
-  const name = document.getElementById("flowSelect").value;
-  if (!name) return;
-  if (!confirm(`Delete saved flow "${name}"?`)) return;
-  loadSavedFlows(flows => {
-    const filtered = flows.filter(f => f.name !== name);
-    chrome.storage.local.set({ workdayFlows: filtered }, () => renderFlowSelect(filtered));
-  });
-});
+// ─── Full Flow Automation ───────────────────────────────────────────────────
+// Recording a flow captures the SEQUENCE of navigation actions (which button
+// advances each step, how long it took to appear, where the resume-upload
+// step sits) across an entire application. Replay re-finds each button by
+// its recorded label (not a stale id/selector) and re-runs the existing
+// field-fill engine on every page in between — see flow-engine.js.
 
-document.getElementById("flowRunBtn")?.addEventListener("click", async () => {
-  const name = document.getElementById("flowSelect").value;
-  if (!name) { appendFlowLog("Pick a saved flow first."); return; }
+function setFlowRecUI(recording) {
+  document.getElementById("flowRecStartBtn").style.display = recording ? "none" : "block";
+  document.getElementById("flowRecStopBtn").style.display = recording ? "block" : "none";
+  document.getElementById("flowRecIndicator").style.display = recording ? "flex" : "none";
+}
+
+function showFlowRecStatus(msg) {
+  const el = document.getElementById("flowRecStatusMsg");
+  if (el) el.textContent = msg;
+}
+
+document.getElementById("flowRecStartBtn")?.addEventListener("click", async () => {
   const tab = await getActiveTab();
   if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { action: "startFlowRecording" }, () => {
+    if (chrome.runtime.lastError) { showFlowRecStatus("Couldn't start on this page — try reloading it first."); return; }
+    setFlowRecUI(true);
+    showFlowRecStatus("Recording — go through the whole application: choice screen, account creation, resume upload, every Next, and Submit.");
+  });
+});
 
-  loadSavedFlows(flows => {
-    const flow = flows.find(f => f.name === name);
-    if (!flow) return;
-    const steps = flow.steps.map(s => ({ ...s }));
-    if (document.getElementById("flowPauseSubmit").checked) {
-      const idx = findLikelySubmitStepIndex(steps);
-      if (idx >= 0) steps[idx].pauseBeforeSubmit = true;
-    }
-    document.getElementById("flowLog").innerHTML = "";
-    setFlowRunningUI(true);
-    chrome.tabs.sendMessage(tab.id, { action: "runFlow", steps }, response => {
-      if (chrome.runtime.lastError || !response || !response.success) {
-        appendFlowLog("Couldn't start: " + ((response && response.error) || "reload the page and try again."));
-        setFlowRunningUI(false);
-      }
+document.getElementById("flowRecStopBtn")?.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { action: "stopFlowRecording" }, response => {
+    setFlowRecUI(false);
+    const steps = (response && response.steps) || [];
+    const siteHost = (response && response.siteHost) || "";
+    if (!steps.length) { showFlowRecStatus("No navigation steps captured — did you click any Next/Continue buttons?"); return; }
+    const defaultName = `${siteHost.replace(/^www\./, "")} — ${new Date().toLocaleDateString()}`;
+    const name = prompt(`Captured ${steps.length} steps. Name this flow:`, defaultName);
+    if (!name) { showFlowRecStatus("Discarded — no name given."); return; }
+    chrome.storage.local.get(["flows"], result => {
+      const flows = result.flows || [];
+      flows.unshift({ id: "flow_" + Date.now(), name, siteHost, steps, createdAt: Date.now() });
+      chrome.storage.local.set({ flows }, () => {
+        showFlowRecStatus(`Saved flow "${name}" with ${steps.length} steps.`);
+        renderFlowList();
+      });
     });
   });
 });
 
-document.getElementById("flowStopBtn")?.addEventListener("click", async () => {
+function renderFlowList() {
+  chrome.storage.local.get(["flows"], result => {
+    const flows = result.flows || [];
+    const container = document.getElementById("flowList");
+    if (!flows.length) {
+      container.innerHTML = `<div class="empty-list-msg">No flows recorded yet.</div>`;
+      return;
+    }
+    container.innerHTML = flows.map(f => {
+      const dateStr = new Date(f.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+      const stepBadges = f.steps.slice(0, 6).map(s => {
+        const cls = s.type === "submit-click" ? "type-submit" : s.type === "resume-upload" ? "type-upload" : "";
+        const label = s.type === "resume-upload" ? "resume" : s.type.replace("-click", "");
+        return `<span class="flow-step-badge ${cls}">${escHtml(label)}</span>`;
+      }).join("");
+      return `<div class="qa-item" data-flow-id="${escHtml(f.id)}">
+        <button class="qa-delete flow-delete-btn" title="Delete this flow">✕</button>
+        <div style="font-weight:600;font-size:12.5px;padding-right:22px;">${escHtml(f.name)}</div>
+        <div class="rec-meta" style="margin:4px 0;">${escHtml(f.siteHost || "")} · ${dateStr} · ${f.steps.length} steps</div>
+        <div style="margin-bottom:8px;">${stepBadges}</div>
+        <button class="btn btn-primary btn-full btn-sm flow-run-btn">▶ Run This Flow</button>
+      </div>`;
+    }).join("");
+
+    container.querySelectorAll(".flow-delete-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.closest(".qa-item").dataset.flowId;
+        chrome.storage.local.get(["flows"], r => {
+          const updated = (r.flows || []).filter(f => f.id !== id);
+          chrome.storage.local.set({ flows: updated }, renderFlowList);
+        });
+      });
+    });
+    container.querySelectorAll(".flow-run-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.closest(".qa-item").dataset.flowId;
+        chrome.storage.local.get(["flows", "profile"], async r => {
+          const flow = (r.flows || []).find(f => f.id === id);
+          if (!flow) return;
+          const profile = r.profile || getDefaultProfile();
+          const tab = await getActiveTab();
+          if (!tab) return;
+          chrome.tabs.sendMessage(tab.id, { action: "runFlow", flow, profile }, resp => {
+            if (chrome.runtime.lastError || !resp || !resp.success) {
+              document.getElementById("flowRunMsg").textContent = "Couldn't start automation on this page. Make sure you're on the flow's starting page and it's a supported site.";
+              return;
+            }
+            document.getElementById("flowRunIndicator").style.display = "flex";
+            document.getElementById("flowRunControls").style.display = "flex";
+            document.getElementById("flowResumeBtn").style.display = "none";
+            document.getElementById("flowRunStepText").textContent = "Starting…";
+            document.getElementById("flowRunMsg").textContent = "";
+          });
+        });
+      });
+    });
+  });
+}
+
+document.getElementById("flowStopRunBtn")?.addEventListener("click", async () => {
   const tab = await getActiveTab();
-  if (tab) chrome.tabs.sendMessage(tab.id, { action: "stopFlow" }, () => {});
-  setFlowRunningUI(false);
+  if (tab) chrome.tabs.sendMessage(tab.id, { action: "stopFlowRun" }, () => {});
 });
 
 document.getElementById("flowResumeBtn")?.addEventListener("click", async () => {
   const tab = await getActiveTab();
-  if (tab) chrome.tabs.sendMessage(tab.id, { action: "confirmStep" }, () => {});
-  document.getElementById("flowResumeBtn").style.display = "none";
+  if (tab) chrome.tabs.sendMessage(tab.id, { action: "resumeFlowStep" }, () => {
+    document.getElementById("flowResumeBtn").style.display = "none";
+    document.getElementById("flowRunStepText").textContent = "Resuming…";
+  });
 });
 
-// player.js (running as a content script) posts progress here while the popup is open.
+// Live updates pushed from flow-engine.js (via background.js relay) while the
+// popup happens to be open. If the popup is closed the run keeps going
+// on-page (the banner + buttons are on the page itself) — this listener is
+// just for showing progress inside the popup when it's open.
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.action !== "flowLog") return;
-  appendFlowLog(message.message);
-  if (message.flowPaused) document.getElementById("flowResumeBtn").style.display = "block";
-  if (message.flowDone || message.flowError) setFlowRunningUI(false);
+  if (message.action !== "flowRunUpdate") return;
+  const stepText = document.getElementById("flowRunStepText");
+  const indicator = document.getElementById("flowRunIndicator");
+  const controls = document.getElementById("flowRunControls");
+  const resumeBtn = document.getElementById("flowResumeBtn");
+  const msg = document.getElementById("flowRunMsg");
+  if (!stepText) return; // popup not on the flow panel / not open
+
+  if (message.state === "running") {
+    indicator.style.display = "flex";
+    controls.style.display = "flex";
+    stepText.textContent = message.stepName + (message.totalSteps ? ` (${message.stepIndex + 1}/${message.totalSteps})` : "");
+    stepText.className = "status-val pulse";
+    resumeBtn.style.display = "none";
+  } else if (message.state === "paused-upload") {
+    stepText.textContent = "Waiting for resume upload: " + message.stepName;
+    stepText.className = "status-val";
+    resumeBtn.style.display = "block";
+    msg.textContent = "Go upload your resume on the page, then tap Resume.";
+  } else if (message.state === "done") {
+    stepText.textContent = "✅ Complete";
+    stepText.className = "status-val";
+    controls.style.display = "none";
+    msg.textContent = "Flow finished.";
+    loadSubmissionLog();
+    loadHistory();
+  } else if (message.state === "stopped") {
+    stepText.textContent = "⏹ Stopped";
+    controls.style.display = "none";
+    msg.textContent = "Automation stopped.";
+  } else if (message.state === "error") {
+    stepText.textContent = "⚠ " + message.stepName;
+    controls.style.display = "none";
+    msg.textContent = message.message || "Automation stopped — couldn't find the expected button.";
+  }
 });
+
+function loadSubmissionLog() {
+  chrome.storage.local.get(["history"], result => {
+    const submissions = (result.history || []).filter(h => h.submitted);
+    const container = document.getElementById("submissionLogList");
+    if (!submissions.length) {
+      container.innerHTML = `<div class="empty-list-msg">No submissions logged yet.</div>`;
+      return;
+    }
+    container.innerHTML = submissions.slice(0, 20).map(h => {
+      const dateStr = new Date(h.timestamp).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+      return `<div class="history-item">
+        <div class="history-icon">🚀</div>
+        <div class="history-info">
+          <div class="history-site">${escHtml(h.siteName || "Unknown")}${h.flowName ? " · " + escHtml(h.flowName) : ""}</div>
+          <div class="history-meta">${dateStr} · ${escHtml((h.url || "").replace(/https?:\/\//, "").slice(0, 40))}</div>
+        </div>
+        <div class="history-count">+${h.fieldCount || 0}</div>
+      </div>`;
+    }).join("");
+  });
+}
+
+async function refreshFlowPanel() {
+  renderFlowList();
+  loadSubmissionLog();
+  const tab = await getActiveTab();
+  if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { action: "getFlowRecordingStatus" }, response => {
+    if (!chrome.runtime.lastError) setFlowRecUI(!!(response && response.recording));
+  });
+  chrome.tabs.sendMessage(tab.id, { action: "getFlowRunStatus" }, response => {
+    if (chrome.runtime.lastError || !response) return;
+    document.getElementById("flowRunIndicator").style.display = response.running ? "flex" : "none";
+    document.getElementById("flowRunControls").style.display = response.running ? "flex" : "none";
+    document.getElementById("flowResumeBtn").style.display = response.paused ? "block" : "none";
+    if (response.running) document.getElementById("flowRunStepText").textContent = response.paused ? "Waiting for resume upload…" : "Running…";
+  });
+}

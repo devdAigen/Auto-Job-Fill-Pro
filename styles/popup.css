@@ -328,6 +328,16 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); cur
 
 /* ─── Yes/No Item ─────────────────────────────────────── */
 .rec-meta { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
+.rec-submode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.flow-step-badge {
+  display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.02em;
+  text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+  background: var(--surface2); color: var(--text-muted); margin-right: 6px;
+}
+.flow-step-badge.type-submit { background: rgba(239,68,68,0.15); color: var(--red); }
+.flow-step-badge.type-upload { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.status-val.pulse::before { content:'●'; margin-right:4px; animation: pulse-dot 1.3s ease-in-out infinite; }
+@keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 .yn-item { padding-right: 40px; }
 
 .yn-row {

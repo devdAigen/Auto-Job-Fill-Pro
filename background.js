@@ -57,12 +57,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         siteName: getPlatformName(message.url),
         timestamp: Date.now(),
         fieldCount: message.fieldCount || 0,
-        title: message.title || ""
+        title: message.title || "",
+        flowName: message.flowName || "",
+        submitted: !!message.submitted
       });
       const trimmed = history.slice(0, 100);
       chrome.storage.local.set({ history: trimmed });
     });
   }
+
+  // flowRunUpdate messages from flow-engine.js go straight from the content
+  // script to any open popup via chrome.runtime.sendMessage — no relay
+  // needed here. (An earlier version of this handler re-sent the message,
+  // which would have looped back into this same listener — removed.)
 
   if (message.action === "getHistory") {
     chrome.storage.local.get(["history"], (result) => {
